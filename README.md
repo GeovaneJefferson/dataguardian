@@ -16,3 +16,10 @@
 
 ## Customization
 **Schedule Type:** Define how many backups per day you'd like (2, 4, or 6).  
+
+## Progress
+- **Backup**: ⬛⬛⬛⬛⬛⬛⬛⬛⬜⬜ (80% complete)
+- **Restore**: ⬛⬛⬜⬜⬜⬜⬜⬜⬜⬜ (20% complete)
+- **Translation**: ⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ (0% complete)
+- **UI**: ⬛⬛⬛⬛⬛⬜⬜⬜⬜⬜ (50% complete)
+
