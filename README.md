@@ -18,10 +18,10 @@ Here's the updated `README.md` for **Data Guardian** with the requested changes:
 - **Saving and Adjusting:** Continuously saves backup data in the database, ensuring that all changes are reflected in the backup history.  
 
 ## **Progress**
-- **Backup**: ⬛⬛⬛⬛⬛⬛⬜⬜⬜⬜ (60% complete)  
+- **Backup**: ⬛⬛⬛⬛⬛⬛⬛⬛⬜⬜ (80% complete)  
 - **Restore**: ⬛⬛⬛⬜⬜⬜⬜⬜⬜⬜ (30% complete)  
-- **Version Management**: ⬛⬛⬛⬛⬛⬜⬜⬜⬜⬜ (50% complete)  
-- **UI Enhancements**: ⬛⬛⬛⬛⬜⬜⬜⬜⬜⬜ (40% complete)
+- **Version Management**: ⬛⬛⬛⬛⬛⬛⬛⬛⬜⬜ (80% complete)  
+- **UI Enhancements**: ⬛⬛⬛⬛⬛⬜⬜⬜⬜⬜ (50% complete)
 
 ---
 
