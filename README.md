@@ -1,7 +1,3 @@
-Here's the updated `README.md` for **Data Guardian** with the requested changes:
-
----
-
 # **Data Guardian**
 
 **Data Guardian** is a backup tool designed specifically for **Linux users**. It continuously monitors your files for any new updates and immediately backs them up while maintaining previous versions for easy recovery. This ensures that your important files are always up to date and securely stored.
