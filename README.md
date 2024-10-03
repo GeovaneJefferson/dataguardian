@@ -18,7 +18,3 @@
 - **Restore**: ⬛⬛⬛⬜⬜⬜⬜⬜⬜⬜ (30% complete)  
 - **Version Management**: ⬛⬛⬛⬛⬛⬛⬛⬛⬜⬜ (80% complete)  
 - **UI Enhancements**: ⬛⬛⬛⬛⬛⬜⬜⬜⬜⬜ (50% complete)
-
----
-
-Feel free to copy this directly into your `README.md` file for **Data Guardian**. It now reflects the latest features and functionality accurately!
