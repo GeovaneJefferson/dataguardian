@@ -4,13 +4,14 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
   <name>Data Guardian</name>
-  <summary>A file backup and versioning tool.</summary>
+  <summary>A file backup and versioning tool</summary>
   <description>
     <p>Data Guardian automatically backs up your files and maintains multiple versions of them, providing an easy way to restore previous versions in case of accidental changes or data loss.</p>
   </description>
-  <developer_name>Geovane Jefferson</developer_name>
+  <developer-name>Geovane Jefferson</developer-name>
+  <developer-info>https://github.com/GeovaneJefferson/dataguardian</developer-info>
   <icon type="stock" name="com.gnome.dataguardian"/>
-  <url type="homepage">https://your-project-homepage.com</url>
+  <url type="homepage">https://github.com/GeovaneJefferson/dataguardian</url>
   <launchable type="desktop-id">com.gnome.dataguardian.desktop</launchable>
   <provides>
     <binary>dataguardian</binary>
@@ -18,4 +19,5 @@
   <categories>
     <category>Utility</category>
   </categories>
+  <content-rating>org.freedesktop.appearance.Rating</content-rating>
 </component>
