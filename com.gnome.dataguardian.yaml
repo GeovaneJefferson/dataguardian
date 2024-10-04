@@ -46,16 +46,16 @@ modules:
       # Create the config directory in the app's runtime
       - mkdir -p /app/share/dataguardian/config
 
+      # Copy AppStream metadata to the correct location
+      - mkdir -p /app/share/metainfo
+      - cp -r com.gnome.dataguardian.metainfo.xml /app/share/metainfo/
+      
       # Install requirements 
       - pip3 install --prefix=/app -r requirements.txt
       
     build-options:
       build-args:
         - --share=network
-      sandbox:
-        filesystem:
-          - xdg-config/fontconfig
-          - host
 cleanup-commands:
   - /app/bin/stop-daemon.sh
 
