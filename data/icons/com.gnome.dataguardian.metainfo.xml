@@ -9,7 +9,7 @@
     <p>Data Guardian automatically backs up your files and maintains multiple versions of them, providing an easy way to restore previous versions in case of accidental changes or data loss.</p>
   </description>
   <developer_name>Geovane Jefferson</developer_name>
-  <icon>com.gnome.dataguardian</icon>
+  <icon type="stock" name="com.gnome.dataguardian"/>
   <url type="homepage">https://your-project-homepage.com</url>
   <launchable type="desktop-id">com.gnome.dataguardian.desktop</launchable>
   <provides>

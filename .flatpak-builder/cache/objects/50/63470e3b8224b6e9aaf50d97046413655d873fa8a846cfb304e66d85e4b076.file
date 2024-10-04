@@ -1,7 +1,0 @@
-[BACKUP]
-automatically_backup = false
-backing_up = false
-
-[DRIVER]
-driver_location = 
-driver_name = 
