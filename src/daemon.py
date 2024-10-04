@@ -85,7 +85,7 @@ class Daemon:
 	def __init__(self):
 		self.user_home: str = os.path.expanduser("~")  # Get user's home directory
 		self.previous_files: dict = {}
-		self.to_backup: list = []
+		self.to_backup: list = []  # File, mod time and size
 		self.failed_backup: list = []  # Track files that haven't been successfully backed up
 		self.copied_files: int = 0
 		self.start_time = time.time()
@@ -170,14 +170,20 @@ class Daemon:
 		current_files = self.get_file_modification_times()
 		tasks: list = []
 
-		# Check for new files
-		for file, (mod_time) in current_files.items():
-			if file not in self.previous_files:
-				if not os.path.exists(os.path.join(self.main_backup_dir, os.path.relpath(file, self.user_home))):
-					tasks.append(server.backup_file(file, mod_time))
-					logging.info(f"Successfully backed up: {file} to {os.path.join(self.main_backup_dir, os.path.relpath(file, self.user_home))}")
-				if file not in self.to_backup:
-					self.to_backup.append(file)
+		try:
+			# Check for new files
+			for file, mod_time in current_files.items():
+				if file not in self.previous_files:
+					if not os.path.exists(os.path.join(self.main_backup_dir, os.path.relpath(file, self.user_home))):
+						tasks.append(server.backup_file(file, mod_time))
+						logging.info(f"Successfully backed up: {file} to {os.path.join(self.main_backup_dir, os.path.relpath(file, self.user_home))}")
+					# Append file with modification time for tracking
+					if (file, mod_time) not in self.to_backup:
+						file_size = os.path.getsize(file)  
+						# self.to_backup.append((file, mod_time, file_size))  #  2 - os.path.relpath(file, self.user_home)
+						self.to_backup.append((file, os.path.relpath(file, self.user_home), file_size))  #  2 - os.path.relpath(file, self.user_home)
+		except ValueError as e:
+			logging.error(f"ValueError: {e}")
 
 		await asyncio.gather(*tasks)
 
@@ -208,7 +214,7 @@ class Daemon:
 
 				# Copy the file to the update backup location
 				shutil.copy2(file, dest_path)
-				logging.info(f"File backed up (update): {file} to {dest_path}")
+				logging.info(f"Successfully backed up (update): {file} to {dest_path}")
 
 				# If backup is successful, remove it from failed_backup if it was there
 				self.failed_backup = [fb for fb in self.failed_backup if fb[0] != file]
@@ -284,9 +290,7 @@ class Daemon:
 			if self.to_backup:
 				for path, rel_path, size in self.to_backup:
 					dst_path = os.path.join(base_backup_dir, rel_path)
-					# Create the directory if it doesn't exist
 					os.makedirs(os.path.dirname(dst_path), exist_ok=True)
-					# Copy the file to the base backup location
 					shutil.copy2(path, dst_path)
 					logging.info(f"File backed up (update): {path} to {dst_path}")
 					
@@ -335,7 +339,7 @@ class Daemon:
 			# Fetch the initial state of the files
 			self.previous_files = self.get_file_modification_times()
 
-			await self.startup_monitor_for_updates()
+			# await self.startup_monitor_for_updates()
 			
 			# Set backup in progress to False
 			self.backup_in_progress = False

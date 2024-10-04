@@ -48,7 +48,7 @@ modules:
 
       # Copy AppStream metadata to the correct location
       - mkdir -p /app/share/metainfo
-      - cp -r data/icons/com.gnome.dataguardian.metainfo.xml /app/share/metainfo/
+      - cp -r com.gnome.dataguardian.metainfo.xml /app/share/metainfo/
       
       # Install requirements 
       - pip3 install --prefix=/app -r requirements.txt

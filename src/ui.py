@@ -8,7 +8,7 @@ from device_location import device_location
 server = SERVER()
 
 # BUG
-# When open app, is create a new daemonm process, why?
+# In auto select backup, is auto selecting the first users backup device.
 
 class UIWindow(Adw.PreferencesWindow):
     def __init__(self, **kwargs):
