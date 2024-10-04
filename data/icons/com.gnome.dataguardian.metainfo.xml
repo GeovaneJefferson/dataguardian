@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.gnome.dataguardian</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Data Guardian</name>
+  <summary>A file backup and versioning tool.</summary>
+  <description>
+    <p>Data Guardian automatically backs up your files and maintains multiple versions of them, providing an easy way to restore previous versions in case of accidental changes or data loss.</p>
+  </description>
+  <developer_name>Geovane Jefferson</developer_name>
+  <icon>com.gnome.dataguardian</icon>
+  <url type="homepage">https://your-project-homepage.com</url>
+  <launchable type="desktop-id">com.gnome.dataguardian.desktop</launchable>
+  <provides>
+    <binary>dataguardian</binary>
+  </provides>
+  <categories>
+    <category>Utility</category>
+  </categories>
+</component>
