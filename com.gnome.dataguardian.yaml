@@ -47,8 +47,8 @@ modules:
       - mkdir -p /app/share/dataguardian/config
 
       # Copy AppStream metadata to the correct location
-      - mkdir -p /app/share/metainfo
-      - cp -r com.gnome.dataguardian.metainfo.xml /app/share/metainfo/
+      # - mkdir -p /app/share/metainfo
+      # - cp -r com.gnome.dataguardian.metainfo.xml /app/share/metainfo/
       
       # Install requirements 
       - pip3 install --prefix=/app -r requirements.txt

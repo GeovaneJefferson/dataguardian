@@ -116,16 +116,22 @@ class Daemon:
 		if new_file:
 			# Backup to .main_backup if it's a new file
 			backup_file_path = self.get_backup_file_path(file)
+			os.makedirs(os.path.dirname(backup_file_path), exist_ok=True)
 			logging.info(f"File backed up: {file} to {backup_file_path}")
 		else:
 			# Create the folder for the current date and time for updated files
 			date_folder = datetime.now().strftime("%d-%m-%Y/%H-%M")
 			backup_file_path = self.get_backup_file_path(file, date_folder)
 			os.makedirs(os.path.dirname(backup_file_path), exist_ok=True)
+			logging.info(f"File backed up (update): {file} to {backup_file_path}")
 		
-		shutil.copy2(file, backup_file_path)
-		logging.info(f"File backed up (update): {file} to {backup_file_path}")
-	
+		try:
+			shutil.copy2(file, backup_file_path)
+		except FileNotFoundError as r:
+			pass
+		except Exception as e:
+			logging.error(f"Error: {e}")
+
 	def save_backup(self, process=None):
 		if process == '.main_backup':
 			# Create the interrupted file if it doesn't exist
