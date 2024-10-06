@@ -477,8 +477,11 @@ class SERVER:
 		return f"{self.DRIVER_LOCATION}/{self.APP_NAME_CLOSE_LOWER}"
 
 	def has_backup_dates_to_compare(self) -> list:   # Check for dates folders
-		return [date for date in os.listdir(self.backup_folder_name()) if '-' in date]
-
+		# return [date for date in os.listdir(self.backup_folder_name()) if '-' in date]
+		return sorted(
+			[date for date in os.listdir(self.backup_folder_name()) if '-' in date],
+			reverse=True)  # Sort dates from newest to oldest
+	
 	def exclude_list(self, dirname: str):
 		for pattern in self.EXCLUDE_FILES:
 			if pattern in dirname:
