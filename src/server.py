@@ -123,8 +123,9 @@ class SERVER:
 			option='backing_up')
 
 		# LOG FILE
-		self.LOG_LOCATION: str = os.path.join(self.create_base_folder(), f'{self.APP_NAME_CLOSE_LOWER}.log')
-		self.REMAINING_FILES_LOCATION: str = os.path.join(self.create_base_folder(), 'remaining_files.json')
+		# self.LOG_LOCATION: str = os.path.join(self.create_base_folder(), f'{self.APP_NAME_CLOSE_LOWER}.log')
+		self.LOG_LOCATION: str = os.path.join(Path.home(), '.var', 'app', self.ID, 'config', f'{self.APP_NAME_CLOSE_LOWER}.log')
+		# self.REMAINING_FILES_LOCATION: str = os.path.join(self.create_base_folder(), 'remaining_files.json')
 		self.INTERRUPTED_MAIN: str = os.path.join(self.create_base_folder(), '.interrupted_main')
 		self.INTERRUPTED_UPDATE: str = os.path.join(self.create_base_folder(), '.interrupted_update')
 
@@ -253,58 +254,6 @@ class SERVER:
 		return home_files
 		# return home_files, len(home_files)
 
-	async def backup_file(self, file, mod_time=None):
-		"""Backup a new or updated file to the base backup directory."""
-		attempt_count = 0  # Track the number of backup attempts
-
-		while True:
-			try:
-				# Ensure the correct relative path is calculated
-				relative_path = os.path.relpath(file, self.USER_HOME)
-				dest_path = os.path.join(self.main_backup_folder(), relative_path)
-
-				# Create the directory if it doesn't exist
-				os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-
-				# Prepare the backup_list correctly (src_path, rel_path, size)
-				# backup_list = [(file, relative_path, os.path.getsize(file))]
-
-				# Check if there is enough space on the backup device
-				if not self.has_backup_device_enough_space(
-						file_path=file, 
-						backup_list=None):
-					raise OSError("Not enough space on the backup device")
-
-				# Copy the file to the base backup location
-				shutil.copy2(file, dest_path)
-				# logging.info(f"Successfully backed up: {file} to {dest_path}")
-
-				# Remove from failed_backup if it was previously there
-				self.failed_backup = [fb for fb in self.failed_backup if fb[0] != file]
-				break  # Exit loop on successful backup
-
-			except OSError as e:
-				# Handle space issues and retry after attempting to free up space
-				if "No space left" in str(e) or "Not enough space" in str(e):
-					logging.warning(f"Not enough space to back up {file}. Trying to delete the oldest backup folder...")
-
-					if attempt_count >= 5:  # Avoid infinite loop after several retries
-						logging.error(f"Reached maximum attempts for {file}. Aborting backup.")
-						break
-
-					# Delete the oldest backup folder and retry
-					try:
-						await self.delete_oldest_backup_folder()
-						attempt_count += 1
-					except OSError as delete_error:
-						logging.error(f"Failed to delete the oldest backup folder: {delete_error}")
-						break
-				else:
-					# Log other OS errors
-					logging.error(f"Error backing up file {file}: {e}")
-					self.failed_backup.append((file, mod_time or os.path.getmtime(file)))
-					break
-
 	async def delete_oldest_backup_folder(self):
 		"""Deletes the oldest backup folder from the updates directory."""
 		updates_backup_dir = self.backup_folder_name()
@@ -321,10 +270,10 @@ class SERVER:
 				return  # Exit early if there are no folders to delete
 
 			# Sort folders by date (assuming DD-MM-YYYY format)
-			backup_folders.sort(key=lambda d: datetime.strptime(d, "%d-%m-%Y"))
+			backup_dates: list = self.has_backup_dates_to_compare()
 
 			# Delete the oldest folder (first in the sorted list)
-			oldest_folder = backup_folders[0]
+			oldest_folder = backup_dates[0]
 			oldest_folder_path = os.path.join(updates_backup_dir, oldest_folder)
 
 			# Delete the folder and log the action
@@ -477,11 +426,12 @@ class SERVER:
 		return f"{self.DRIVER_LOCATION}/{self.APP_NAME_CLOSE_LOWER}"
 
 	def has_backup_dates_to_compare(self) -> list:   # Check for dates folders
-		# return [date for date in os.listdir(self.backup_folder_name()) if '-' in date]
 		return sorted(
-			[date for date in os.listdir(self.backup_folder_name()) if '-' in date],
+			[
+				date for date in os.listdir(self.backup_folder_name()) if '-' in date
+			],
 			reverse=True)  # Sort dates from newest to oldest
-	
+	    
 	def exclude_list(self, dirname: str):
 		for pattern in self.EXCLUDE_FILES:
 			if pattern in dirname:
@@ -699,7 +649,11 @@ class SERVER:
 			if log_size > MAX_LOG_SIZE:
 				# Delete the log file if it exceeds the max size
 				os.remove(self.LOG_LOCATION)
-
+		else:
+			# Create a new empty log file
+			with open(self.LOG_LOCATION, 'w'):
+				pass
+	
 		logging.basicConfig(
 							filename=self.LOG_LOCATION,
 							level=logging.INFO,

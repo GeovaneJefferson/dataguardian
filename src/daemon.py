@@ -39,8 +39,8 @@ class Daemon:
 		self.current_date = datetime.now().strftime('%d-%m-%Y')
 		self.current_time = datetime.now().strftime('%H-%M')
 
-		if has_driver_connection():
-			server.setup_logging()
+		# if has_driver_connection():
+		# 	server.setup_logging()
 
 	def file_was_updated(self, file_path: str, rel_path: str) -> bool:
 		# Get the modification time of the current file
@@ -95,7 +95,7 @@ class Daemon:
 			if os.path.exists(dest_path):
 				continue
 
-			await server.backup_file(path)
+			await self.backup_file(file=path, new_file=True)
 
 		logging.info("Successfully made the first backup.")
 
@@ -112,25 +112,61 @@ class Daemon:
 			return os.path.join(self.updates_backup_dir, date_folder, os.path.relpath(file, self.user_home))
 		return os.path.join(self.main_backup_dir, os.path.relpath(file, self.user_home))
 
-	async def backup_file(self, file, new_file=False):
-		if new_file:
-			# Backup to .main_backup if it's a new file
-			backup_file_path = self.get_backup_file_path(file)
-			os.makedirs(os.path.dirname(backup_file_path), exist_ok=True)
-			logging.info(f"File backed up: {file} to {backup_file_path}")
-		else:
-			# Create the folder for the current date and time for updated files
-			date_folder = datetime.now().strftime("%d-%m-%Y/%H-%M")
-			backup_file_path = self.get_backup_file_path(file, date_folder)
-			os.makedirs(os.path.dirname(backup_file_path), exist_ok=True)
-			logging.info(f"File backed up (update): {file} to {backup_file_path}")
-		
-		try:
-			shutil.copy2(file, backup_file_path)
-		except FileNotFoundError as r:
-			pass
-		except Exception as e:
-			logging.error(f"Error: {e}")
+	async def backup_file(self, file: str, new_file: bool=False):
+		self.backup_in_progress = True
+		attempt_count = 0  # Track the number of backup attempts
+
+		while True:
+			try: 
+				if new_file:
+					# Backup to .main_backup if it's a new file
+					backup_file_path = self.get_backup_file_path(file)
+					os.makedirs(os.path.dirname(backup_file_path), exist_ok=True)
+					logging.info(f"File backed up: {file} to {backup_file_path}")
+				else:
+					# Create the folder for the current date and time for updated files
+					date_folder = datetime.now().strftime("%d-%m-%Y/%H-%M")
+					backup_file_path = self.get_backup_file_path(file, date_folder)
+					os.makedirs(os.path.dirname(backup_file_path), exist_ok=True)
+					logging.info(f"File backed up (update): {file} to {backup_file_path}")
+				
+				try:
+					shutil.copy2(file, backup_file_path)
+					logging.info(f"Successfully backed up: {file}")
+					break
+				except FileNotFoundError as r:
+					continue
+				except Exception as e:
+					# logging.error(f"Error copying file {file}: {e}")
+					pass
+
+			except OSError as e:
+				if "No space left" in str(e) or "Not enough space" in str(e):
+					logging.warning(f"Not enough space to back up {file}. Attempt {attempt_count + 1}. Trying to delete the oldest backup folder...")
+
+					# Check how many backup folders are available
+					backup_dates: list = server.has_backup_dates_to_compare()
+
+					if len(backup_dates) <= 1:
+						logging.error(f"Not enough backup folders to delete. Current folder count: {len(backup_dates)}. Aborting backup.")
+						break  # Abort if there's only one backup left
+
+					if attempt_count >= 5:  # Avoid infinite loop after several retries
+						logging.error(f"Reached maximum attempts for {file}. Aborting backup.")
+						break
+
+					# Delete the oldest backup folder and retry
+					try:
+						await server.delete_oldest_backup_folder()
+						attempt_count += 1
+					except OSError as delete_error:
+						logging.error(f"Failed to delete the oldest backup folder: {delete_error}")
+						break
+				else:
+					logging.error(f"OS error backing up file {file}: {e}")
+					break
+			
+		self.backup_in_progress = False
 
 	def save_backup(self, process=None):
 		if process == '.main_backup':
@@ -185,16 +221,30 @@ class Daemon:
 			logging.error(f"ValueError: {e}")
 
 	async def run_backup_cycle(self):
-		# Make first backup
-		if server.is_first_backup():
-			await self.make_first_backup()
+		checked_for_first_backup: bool = False
+		connection_logged: bool = False  # Track if connection status has already been logged
 
 		while True:
 			if has_driver_connection():
+				if not connection_logged:
+					logging.info("Connection established to backup device.")
+					connection_logged = True  # Avoid logging the same message multiple times
+
+				# Make first backup if it's the first time and no backups have been made yet
+				if not checked_for_first_backup and server.is_first_backup():
+					await self.make_first_backup()
+					checked_for_first_backup = True
+
+				# Process ongoing backups
 				await self.process_backups()
-			
+
+			else:
+				if connection_logged:
+					logging.info("Waiting for connection to backup device...")
+					connection_logged = False  # Reset status to log when connection is re-established
+
 			await asyncio.sleep(30)  # Wait for the specified interval
-	
+
 	def signal_handler(self, signum, frame):
 		"""Handles shutdown and sleep signals."""
 		logging.info(f"Received signal: {signum}. Stopping daemon and saving backup state.")
@@ -214,6 +264,8 @@ class Daemon:
 if __name__ == "__main__":
 	server = SERVER()
 	daemon = Daemon()
+
+	server.setup_logging()
 
 	setproctitle.setproctitle(f'{server.APP_NAME} - daemon')
 	signal.signal(signal.SIGTERM, daemon.signal_handler)  # Termination signal

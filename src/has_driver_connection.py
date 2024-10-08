@@ -19,3 +19,7 @@ def has_driver_connection():
     else:
         # print(f"\033[91m[X]\033[0m Connection to: {driver_location}")
         return False  # Has no connection
+
+
+if __name__ == '__main__':
+    pass

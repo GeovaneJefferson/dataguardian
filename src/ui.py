@@ -39,7 +39,6 @@ class UIWindow(Adw.PreferencesWindow):
         ##########################################################################
         # General Tab
         general_page = Adw.PreferencesPage()
-        general_page.set_title("General")  # Set the title of the page
         # general_page.set_icon_name("folder-open-symbolic")
 
         # General Tab
@@ -84,7 +83,7 @@ class UIWindow(Adw.PreferencesWindow):
         self.switch_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
 
         # Create a label for the switch with your specified text
-        label = Gtk.Label(label="   Locates and backups new and updated files in your device.")
+        label = Gtk.Label(label="   Back up new and changed files in your home.")
 
         # Create the switch
         self.programmatic_change = False  # Add this line
@@ -109,38 +108,42 @@ class UIWindow(Adw.PreferencesWindow):
         ##########################################################################
         # Folders Tab
         folders_page = Adw.PreferencesPage()
-        folders_page.set_title("Folders")
         # folders_page.set_icon_name("folder-open-symbolic")
-        # self.add(folders_page)
+        self.add(folders_page)
 
+        # Create the groups
         ignore_group = Adw.PreferencesGroup(title="Folders to ignore")
+        exclude_group = Adw.PreferencesGroup(title="Exclude")
 
         # Add folder selector to ignore
         folder_select_button = Gtk.Button(label="Add Folder")
         folder_select_button.connect("clicked", self.on_folder_select_button_clicked)
         ignore_group.add(folder_select_button)
 
-        # Add a new PreferencesGroup for ignoring hidden files/folders
-        ignore_hidden_group = Adw.PreferencesGroup(title="Files to ignore")
+        # Backup Automation Switch
+        hidden_switch_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
 
-        # Create a switch for ignoring hidden files/folders
-        self.ignore_hidden_row = Adw.ActionRow(title="Ignore Hidden Files/Folders")
-        self.ignore_hidden_switch = Gtk.Switch(active=True)
-        self.ignore_hidden_switch.set_tooltip_text("Enable to ignore hidden files and folders in Home")
-        self.ignore_hidden_switch.connect("notify::active", self.on_ignore_hidden_switch_toggled)
-        self.ignore_hidden_row.add_suffix(self.ignore_hidden_switch)
-        ignore_hidden_group.add(self.ignore_hidden_row)
+        # Create a label for the switch
+        label = Gtk.Label(label="   Ignore hidden files and empty folders.")
 
-        # Add groups
-        folders_page.add(ignore_hidden_group)
+        # Create the switch
+        self.ignore_hidden_switch = Gtk.Switch()
+        self.ignore_hidden_switch.connect("notify::active", self.on_auto_backup_switch_toggled)
+
+        # Add the label to the switch box
+        hidden_switch_box.append(self.ignore_hidden_switch)
+        hidden_switch_box.append(label)
+
+        # Add the switch box to the exclude group
+        exclude_group.add(hidden_switch_box)
+
+        # Add groups to folders_page
+        folders_page.add(exclude_group)
         folders_page.add(ignore_group)
 
         # Set titles for tabs
-        # general_page.set_title("General")
-        # folders_page.set_title("Folders")
-
-        # Start checking for devices every x seconds
-        # GLib.timeout_add_seconds(2, self.available_devices_location)
+        general_page.set_title("General")
+        folders_page.set_title("Folders")
 
     def on_ignore_hidden_switch_toggled(self, switch, gparam):
         # Handle the toggle state of the ignore hidden switch
@@ -289,13 +292,54 @@ class UIWindow(Adw.PreferencesWindow):
 
     def on_filechooser_response(self, dialog, response):
         if response == Gtk.ResponseType.OK:
-            file = dialog.get_file()
-            if file is not None:
-                selected_folder = file.get_path()
-                # Do something with the selected folder
+            selected_folder = dialog.get_file()
+            
+            if selected_folder is not None:
+                selected_folder = selected_folder.get_path()
+                
                 print(f"Selected folder: {selected_folder}")
 
+                # Convert the selected folder to a relative path
+                rel_path = os.path.relpath(selected_folder, server.USER_HOME)  # Adjust based on the base directory
+                
+                print(f"Selected folder rel: {rel_path}")
+
+                # Add the relative path to the config file
+                self.add_folder_to_config(rel_path)
+
         dialog.destroy()
+
+    def add_folder_to_config(self, folder):
+        config_file_path = 'src/database/config.conf'  # Adjust to the actual path of your config file
+
+        # Read the current config file content
+        with open(config_file_path, 'r') as file:
+            lines = file.readlines()
+
+        # Look for the [EXCLUDE_FOLDER] section
+        exclude_section_found = False
+        for i, line in enumerate(lines):
+            if line.strip() == "[EXCLUDE_FOLDER]":
+                exclude_section_found = True
+            elif exclude_section_found and line.strip() == "":
+                # Add the new folder just before the next empty line
+                lines.insert(i, f"{folder}\n")  # Ensure there's a newline before the folder
+                break
+
+        # If the section is not found, append it at the end
+        if not exclude_section_found:
+            lines.append("\n[EXCLUDE_FOLDER]\n")  # Add the section header if not found
+            lines.append(f"{folder}\n")  # Add the folder with a newline
+
+        # If the section was found but no empty line was encountered, add it at the end
+        elif exclude_section_found and lines[-1].strip() != "":
+            lines.append(f"{folder}\n")  # Add the folder to the end
+
+        # Write back the updated content to the config file
+        with open(config_file_path, 'w') as file:
+            file.writelines(lines)
+
+        print(f"Added folder to config: {folder}")  # For debugging
 
     def on_backup_device_selected(self, combo_box):
         # Handle backup device selection
