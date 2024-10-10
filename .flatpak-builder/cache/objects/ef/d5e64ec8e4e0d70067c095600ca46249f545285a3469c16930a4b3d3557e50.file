@@ -1,0 +1,55 @@
+{
+  "id" : "com.gnome.dataguardian",
+  "runtime" : "org.gnome.Platform",
+  "runtime-version" : "46",
+  "runtime-commit" : "8de359b435c4ca4c84b50f8d12c2e079c30ce07f997c033d0575632798c36483",
+  "sdk" : "org.gnome.Sdk",
+  "sdk-commit" : "b2b841158ffbfaff5be3c13f7110e0b1bc1a0a10c4e67675e08022b5375ce3a7",
+  "command" : "dataguardian.sh",
+  "modules" : [
+    {
+      "name" : "dataguardian",
+      "buildsystem" : "simple",
+      "sources" : [
+        {
+          "url" : "https://github.com/GeovaneJefferson/dataguardian.git",
+          "commit" : "be2089f4e27afd087af0d83f2557cb9c4708aec1",
+          "type" : "git"
+        }
+      ],
+      "build-options" : {
+        "build-args" : [
+          "--share=network"
+        ]
+      },
+      "build-commands" : [
+        "mkdir -p /app/share/dataguardian",
+        "cp -r src /app/share/dataguardian",
+        "cp -r data /app/share/dataguardian",
+        "cp -r share /app/share/dataguardian",
+        "mkdir -p /app/share/applications",
+        "cp -r share/applications/com.gnome.dataguardian.desktop /app/share/applications/",
+        "mkdir -p /app/share/icons/hicolor/48x48/apps",
+        "cp -r data/icons/com.gnome.dataguardian.png /app/share/icons/hicolor/48x48/apps/",
+        "install -D -m755 dataguardian.sh -t /app/bin",
+        "install -D -m755 stop-daemon.sh -t /app/bin",
+        "mkdir -p /app/share/dataguardian/config",
+        "pip3 install --prefix=/app -r requirements.txt"
+      ]
+    }
+  ],
+  "cleanup-commands" : [
+    "/app/bin/stop-daemon.sh"
+  ],
+  "finish-args" : [
+    "--share=ipc",
+    "--device=all",
+    "--socket=x11",
+    "--socket=wayland",
+    "--filesystem=host",
+    "--filesystem=home",
+    "--share=network",
+    "--socket=session-bus"
+  ],
+  "source-date-epoch" : 1728198235
+}

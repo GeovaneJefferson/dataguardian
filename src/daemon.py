@@ -122,22 +122,22 @@ class Daemon:
 					# Backup to .main_backup if it's a new file
 					backup_file_path = self.get_backup_file_path(file)
 					os.makedirs(os.path.dirname(backup_file_path), exist_ok=True)
-					logging.info(f"File backed up: {file} to {backup_file_path}")
+					# logging.info(f"File backed up: {file} to {backup_file_path}")
 				else:
 					# Create the folder for the current date and time for updated files
 					date_folder = datetime.now().strftime("%d-%m-%Y/%H-%M")
 					backup_file_path = self.get_backup_file_path(file, date_folder)
 					os.makedirs(os.path.dirname(backup_file_path), exist_ok=True)
-					logging.info(f"File backed up (update): {file} to {backup_file_path}")
+					# logging.info(f"File backed up (update): {file} to {backup_file_path}")
 				
 				try:
 					shutil.copy2(file, backup_file_path)
-					logging.info(f"Successfully backed up: {file}")
+					logging.info(f"Successfully backed up: {file} to {backup_file_path}")
 					break
 				except FileNotFoundError as r:
 					continue
 				except Exception as e:
-					# logging.error(f"Error copying file {file}: {e}")
+					logging.error(f"Error backing up: {file}: {e}")
 					pass
 
 			except OSError as e:
