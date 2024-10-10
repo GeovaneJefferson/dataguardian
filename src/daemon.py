@@ -51,7 +51,6 @@ class Daemon:
 		self.suspend_flag = False  # Flag to handle suspension
 		self.main_backup_dir: str = server.main_backup_folder()
 		self.updates_backup_dir: str = server.backup_folder_name()
-		self.filtered_home_files: tuple = server.get_filtered_home_files()  # File, rel_path and size
 
 		self.current_date = datetime.now().strftime('%d-%m-%Y')
 		self.current_time = datetime.now().strftime('%H-%M')
@@ -105,8 +104,9 @@ class Daemon:
 	async def make_first_backup(self):
 		# Before starting the backup, set the flag
 		self.is_backing_up_to_main = True
+		filtered_home: tuple = await server.get_filtered_home_files()
 
-		for path, rel_path, size in self.filtered_home_files:
+		for path, rel_path, size in filtered_home:
 			# Skip files that were already backed up
 			dest_path = os.path.join(self.main_backup_dir, rel_path)
 			if os.path.exists(dest_path):
@@ -248,6 +248,16 @@ class Daemon:
 			# Check if app still installed
 			if not await is_app_installed():
 				print('Existing...')
+
+				try:
+					# Set realtime protection to false
+					server.set_database_value(
+						section='BACKUP',
+						option='automatically_backup',
+						value='false')
+				except:
+					pass
+
 				sys.exit(0)
 
 			if has_driver_connection():
