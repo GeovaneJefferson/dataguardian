@@ -20,7 +20,7 @@ async def backup_flatpaks_names():
 	except IOError as e:
 		logging.error(f"Error backing up flatpaks installations: {e}")
 
-async def is_app_installed():
+def is_app_installed():
 	"""Check if the Flatpak app is still installed."""
 	try:
 		# Run the Flatpak list command to check for the app installation
@@ -29,13 +29,12 @@ async def is_app_installed():
 			stdout=sub.PIPE,
 			stderr=sub.PIPE
 		)
-		if result.returncode != 0:
-			print('App is not installed.')
-			# sys.exit(0)
+		print(result.returncode)
+		if result.returncode != 0 or result.returncode == 'False':
 			return False
 		return True
-	except Exception:
-		return False
+	except Exception as e:
+		logging.error(f"Error checking if app is installed: {e}")
 
 
 class Daemon:
@@ -245,20 +244,11 @@ class Daemon:
 		connection_logged: bool = False  # Track if connection status has already been logged
 
 		while True:
-			# Check if app still installed
-			if not await is_app_installed():
-				print('Existing...')
-
-				try:
-					# Set realtime protection to false
-					server.set_database_value(
-						section='BACKUP',
-						option='automatically_backup',
-						value='false')
-				except:
-					pass
-
-				sys.exit(0)
+			# # Check if app still installed
+			# if not is_app_installed():
+			# 	print('Exiting... Application is uninstalled.')
+			# 	self.signal_handler(signal.SIGTERM, None)  # Call the signal handler to stop the daemon
+			# 	break  # Exit the loop and terminate the daemon
 
 			if has_driver_connection():
 				if not connection_logged:

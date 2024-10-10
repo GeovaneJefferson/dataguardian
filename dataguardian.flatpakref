@@ -1,0 +1,8 @@
+[Flatpak Ref]
+Name=com.gnome.dataguardian
+Branch=stable
+Title=Data Guardian
+Url=https://github.com/GeovaneJefferson/dataguardian/repo/
+RuntimeRepo=https://github.com/GeovaneJefferson/dataguardian/repo/com.gnome.dataguardian.flatpakrepo
+IsRuntime=false
+GPGKey=D24155625EAB6380C40334BA20130187ABDE860A
