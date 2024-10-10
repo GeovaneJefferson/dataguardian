@@ -25,7 +25,7 @@ def at_boot():
                 if not server.is_daemon_running():
                     # Set the correct path to the daemon script
                     daemon_script_path = server.DAEMON_PY_LOCATION
-                    logging.info(f"Daemon script path: {daemon_script_path}")
+                    # logging.info(f"Daemon script path: {daemon_script_path}")
 
                     # Start the backup checker
                     process = sub.Popen(
@@ -33,7 +33,11 @@ def at_boot():
                         stdout=sub.PIPE,
                         stderr=sub.PIPE
                     )
-                    
+
+                    # Store the new PID in the file
+                    with open(server.DAEMON_PID_LOCATION, 'w') as f:
+                        f.write(str(process.pid))
+                        
                     # Log the process ID of the started daemon
                     logging.info(f"Daemon started with PID: {process.pid}")
                 else:

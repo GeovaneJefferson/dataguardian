@@ -224,7 +224,7 @@ class SERVER:
 		except Exception as e:
 			logging.error('Error while trying to find if is the first backup.')
 
-	def get_filtered_home_files(self) -> tuple:
+	async def get_filtered_home_files(self) -> tuple:
 		"""
 		Retrieve all files from the home directory while optionally excluding hidden items.
 		Returns a tuple containing the list of files and the total count of files.

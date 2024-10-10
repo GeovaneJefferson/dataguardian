@@ -1,5 +1,0 @@
-[Runtime]
-name=com.gnome.dataguardian.Debug
-
-[ExtensionOf]
-ref=app/com.gnome.dataguardian/x86_64/master

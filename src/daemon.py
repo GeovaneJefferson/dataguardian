@@ -20,6 +20,23 @@ async def backup_flatpaks_names():
 	except IOError as e:
 		logging.error(f"Error backing up flatpaks installations: {e}")
 
+async def is_app_installed():
+	"""Check if the Flatpak app is still installed."""
+	try:
+		# Run the Flatpak list command to check for the app installation
+		result = sub.run(
+			['flatpak', 'info', server.ID],
+			stdout=sub.PIPE,
+			stderr=sub.PIPE
+		)
+		if result.returncode != 0:
+			print('App is not installed.')
+			# sys.exit(0)
+			return False
+		return True
+	except Exception:
+		return False
+
 
 class Daemon:
 	def __init__(self):
@@ -200,9 +217,12 @@ class Daemon:
 		tasks: list = []
 
 		try:
+			filtered_home: tuple = await server.get_filtered_home_files()
+
 			# Have to check the file 
-			for file_path, rel_path, size in server.get_filtered_home_files():
-				modded_main_file_path = os.path.join(self.main_backup_dir,  os.path.relpath(file_path, server.USER_HOME))
+			for file_path, rel_path, size in filtered_home:
+				modded_main_file_path = os.path.join(
+					self.main_backup_dir,  os.path.relpath(file_path, server.USER_HOME))
 				
 				# Check for new files
 				if not os.path.exists(modded_main_file_path):
@@ -225,6 +245,11 @@ class Daemon:
 		connection_logged: bool = False  # Track if connection status has already been logged
 
 		while True:
+			# Check if app still installed
+			if not is_app_installed():
+				print('Existing...')
+				sys.exit(0)
+
 			if has_driver_connection():
 				if not connection_logged:
 					logging.info("Connection established to backup device.")
