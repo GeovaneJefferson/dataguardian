@@ -246,7 +246,7 @@ class Daemon:
 
 		while True:
 			# Check if app still installed
-			if not is_app_installed():
+			if not await is_app_installed():
 				print('Existing...')
 				sys.exit(0)
 
