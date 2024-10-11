@@ -20,7 +20,7 @@ modules:
     sources:
       - type: git
         url: https://github.com/GeovaneJefferson/dataguardian.git
-        branch: main # or the branch you want to use
+        branch: main
       
     build-commands:
       # Create the main application directory

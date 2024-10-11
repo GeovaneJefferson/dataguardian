@@ -20,21 +20,21 @@ async def backup_flatpaks_names():
 	except IOError as e:
 		logging.error(f"Error backing up flatpaks installations: {e}")
 
-def is_app_installed():
-	"""Check if the Flatpak app is still installed."""
-	try:
-		# Run the Flatpak list command to check for the app installation
-		result = sub.run(
-			['flatpak', 'info', server.ID],
-			stdout=sub.PIPE,
-			stderr=sub.PIPE
-		)
-		print(result.returncode)
-		if result.returncode != 0 or result.returncode == 'False':
-			return False
-		return True
-	except Exception as e:
-		logging.error(f"Error checking if app is installed: {e}")
+# def is_app_installed():
+# 	"""Check if the Flatpak app is still installed."""
+# 	try:
+# 		# Run the Flatpak list command to check for the app installation
+# 		result = sub.run(
+# 			['flatpak', 'info', server.ID],
+# 			stdout=sub.PIPE,
+# 			stderr=sub.PIPE
+# 		)
+# 		print(result.returncode)
+# 		if result.returncode != 0 or result.returncode == 'False':
+# 			return False
+# 		return True
+# 	except Exception as e:
+# 		logging.error(f"Error checking if app is installed: {e}")
 
 
 class Daemon:
