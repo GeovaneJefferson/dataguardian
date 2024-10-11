@@ -1,6 +1,6 @@
 [Flatpak Repo]
 Title=com.gnome.dataguardian
-Url=https:https://github.com/GeovaneJefferson/dataguardian/raw/main/repo/
+Url=https://github.com/GeovaneJefferson/dataguardian/raw/main/repo/
 Homepage=https:https://github.com/
 Comment=Central repository of Flatpak applications
 Description=Central repository of Flatpak applications

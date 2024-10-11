@@ -2,7 +2,7 @@
 Name=com.gnome.dataguardian
 Branch=stable
 Title=Data Guardian
-Url=https:https://github.com/GeovaneJefferson/dataguardian/raw/main/repo/
+Url=https://github.com/GeovaneJefferson/dataguardian/raw/main/repo/
 IsRuntime=false
 RuntimeRepo=https://github.com/GeovaneJefferson/dataguardian/repo/flatpak.flatpakrepo
 GPGKey=LS0tLS1CRUdJTiBQR1AgUFVCTElDIEtFWSBCTE9DSy0tLS0tCgptUUlOQkdjSU5pUUJFQURhMU5q
