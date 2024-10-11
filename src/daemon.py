@@ -244,11 +244,12 @@ class Daemon:
 		connection_logged: bool = False  # Track if connection status has already been logged
 
 		while True:
-			# Check if app still installed
-			if not is_app_installed():
-				print('Exiting... Application is uninstalled.')
-				self.signal_handler(signal.SIGTERM, None)  # Call the signal handler to stop the daemon
-				break  # Exit the loop and terminate the daemon
+			# BUG
+			# # Check if app still installed
+			# if not is_app_installed():
+			# 	print('Exiting... Application is uninstalled.')
+			# 	self.signal_handler(signal.SIGTERM, None)  # Call the signal handler to stop the daemon
+			# 	break  # Exit the loop and terminate the daemon
 
 			if has_driver_connection():
 				if not connection_logged:

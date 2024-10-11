@@ -59,7 +59,7 @@ modules:
     sources:
       - type: git
         url: https://github.com/GeovaneJefferson/dataguardian.git
-        commit: b0caa28edfcb5fdf10e826fa0c9e322dbf2f603f
+        commit: 1a2a7fb23131b83f8f80172591151b355aeed39a
       - type: file
         path: com.gnome.dataguardian.metainfo.xml
 cleanup-commands:
