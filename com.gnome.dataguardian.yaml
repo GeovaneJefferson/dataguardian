@@ -56,11 +56,11 @@ modules:
     build-options:
       build-args:
         - --share=network
-    sources:
-      - type: git
-        url: https://github.com/GeovaneJefferson/dataguardian.git
-        commit: 1a2a7fb23131b83f8f80172591151b355aeed39a
-      - type: file
-        path: com.gnome.dataguardian.metainfo.xml
+    # sources:
+    #   - type: git
+    #     url: https://github.com/GeovaneJefferson/dataguardian.git
+    #     commit: d309566b2f3d4de7b88589867e8568246ef91234e0e857545008d3288627ffee
+    #   - type: file
+    #     path: com.gnome.dataguardian.metainfo.xml
 cleanup-commands:
   - /app/bin/stop-daemon.sh
