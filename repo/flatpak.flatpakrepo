@@ -1,12 +1,10 @@
-[Flatpak Ref]
-Name=com.gnome.dataguardian
-Branch=stable
-Title=Data Guardian
+[Flatpak Repo]
+Title=com.gnome.dataguardian
 Url=https:https://github.com/GeovaneJefferson/dataguardian/raw/main/repo/
-IsRuntime=false
-GPGKey=
-
-LS0tLS1CRUdJTiBQR1AgUFVCTElDIEtFWSBCTE9DSy0tLS0tCgptUUlOQkdjSU5pUUJFQURhMU5q
+Homepage=https:https://github.com/
+Comment=Central repository of Flatpak applications
+Description=Central repository of Flatpak applications
+GPGKey=LS0tLS1CRUdJTiBQR1AgUFVCTElDIEtFWSBCTE9DSy0tLS0tCgptUUlOQkdjSU5pUUJFQURhMU5q
 UFo5T1AwUFlOMU8rNHMxN3NDZVhYMVdFdkdJTWF0SWRTczZJWG5lTUhOeWk3CncvZTlBSU84S0dz
 QkY3UWhNSjBzQldNU0F6bkw1aXBwcElDQnFQSVNYYUU0YW5VTGdNN293ZlZ5MW9sTE9oZFQKZHVS
 NzJpUG1aL3RUa04yRVg0T0V3ZU1kVUlkQ3FDUkJMYjFKTVRFNlNuazl6TFFTYndwVEdTT09uVEZ0
