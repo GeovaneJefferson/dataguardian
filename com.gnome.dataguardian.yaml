@@ -59,9 +59,8 @@ modules:
     sources:
       - type: git
         url: https://github.com/GeovaneJefferson/dataguardian.git
-        commit: 4816de2da957298ef0c0c60ca74bb8511f5c656d
+        commit: 0667a9e0bc7aefe507b7b388829d5142f9436522
       - type: file
         path: com.gnome.dataguardian.metainfo.xml
 cleanup-commands:
   - /app/bin/stop-daemon.sh
-
