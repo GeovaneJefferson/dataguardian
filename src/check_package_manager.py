@@ -1,6 +1,5 @@
 from server import *
 
-
 def check_package_manager():
     # Check if dpkg command exists
     dpkg_exists = sub.call(

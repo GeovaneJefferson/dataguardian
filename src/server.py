@@ -24,6 +24,7 @@ import inspect
 import gi
 import json
 import fnmatch
+import hashlib
 
 from datetime import datetime, timedelta
 from pathlib import Path

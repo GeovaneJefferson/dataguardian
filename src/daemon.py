@@ -1,6 +1,14 @@
 from has_driver_connection import has_driver_connection
 from server import *
 
+def hash_file(file_path: str) -> str:
+    """Generate the SHA-256 hash of a file."""
+    hash_sha256 = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_sha256.update(chunk)
+    return hash_sha256.hexdigest()
+
 async def backup_flatpaks_names():
 	flatpak_location: str = server.flatpak_txt_location()
 	flatpaks: set = set()
@@ -20,21 +28,21 @@ async def backup_flatpaks_names():
 	except IOError as e:
 		logging.error(f"Error backing up flatpaks installations: {e}")
 
-# def is_app_installed():
-# 	"""Check if the Flatpak app is still installed."""
-# 	try:
-# 		# Run the Flatpak list command to check for the app installation
-# 		result = sub.run(
-# 			['flatpak', 'info', server.ID],
-# 			stdout=sub.PIPE,
-# 			stderr=sub.PIPE
-# 		)
-# 		print(result.returncode)
-# 		if result.returncode != 0 or result.returncode == 'False':
-# 			return False
-# 		return True
-# 	except Exception as e:
-# 		logging.error(f"Error checking if app is installed: {e}")
+def is_app_installed():
+	"""Check if the Flatpak app is still installed."""
+	try:
+		# Run the Flatpak list command to check for the app installation
+		result = sub.run(
+			['flatpak', 'info', server.ID],
+			stdout=sub.PIPE,
+			stderr=sub.PIPE
+		)
+
+		if result.returncode != 0:
+			return False
+		return True
+	except Exception as e:
+		logging.error(f"Error checking if app is installed: {e}")
 
 
 class Daemon:
@@ -54,13 +62,20 @@ class Daemon:
 		self.current_date = datetime.now().strftime('%d-%m-%Y')
 		self.current_time = datetime.now().strftime('%H-%M')
 
-		# if has_driver_connection():
-		# 	server.setup_logging()
-
 	def file_was_updated(self, file_path: str, rel_path: str) -> bool:
-		# Get the modification time of the current file
-		file_mod_time = os.path.getmtime(file_path)
-		
+		"""Check if the file was updated by comparing its size and content hash (if sizes match)."""
+
+		# Get the modification time and size of the current file
+		# file_mod_time = os.path.getmtime(file_path)
+		try:
+			current_file_size = os.path.getsize(file_path)
+		except FileNotFoundError:
+			return False
+
+		# logging.info(f"Checking file: {file_path}")
+		# logging.info(f"Current file modification time: {file_mod_time}")
+		# logging.info(f"Current file size: {current_file_size}")
+
 		# Get the list of backup dates to compare
 		backup_dates: list = server.has_backup_dates_to_compare()
 
@@ -79,26 +94,113 @@ class Daemon:
 						if os.path.isdir(time_folder_path):
 							updated_file_path = os.path.join(time_folder_path, rel_path)
 
-							# If the backup file exists, compare the modification times
+							# If the backup file exists, compare the sizes and hashes if necessary
 							if os.path.exists(updated_file_path):
 								updated_mod_time = os.path.getmtime(updated_file_path)
+								updated_file_size = os.path.getsize(updated_file_path)
 
-								if updated_mod_time != file_mod_time:
-									# File modification time is different, backup is needed
+								# logging.info(f"Backup file modification time: {updated_mod_time}")
+								# logging.info(f"Backup file size: {updated_file_size}")
+
+								# Compare file sizes first
+								if updated_file_size != current_file_size:
+									logging.info(f"File sizes are different. Backup needed for: {file_path}")
 									return True
-		else:
-			# No backup dates, compare with the .main_backup folder
-			main_file_path = os.path.join(server.main_backup_folder(), rel_path)
+								else:
+									# If sizes are the same, compare the file hashes
+									current_file_hash = hash_file(file_path)
+									updated_file_hash = hash_file(updated_file_path)
 
-			if os.path.exists(main_file_path):
-				main_mod_time = os.path.getmtime(main_file_path)
+									# logging.info(f"Current file hash: {current_file_hash}")
+									# logging.info(f"Backup file hash: {updated_file_hash}")
 
-				if main_mod_time != file_mod_time:
-					# File modification time is different, backup is needed
+									if updated_file_hash != current_file_hash:
+										# logging.info(f"File hashes are different. Backup needed for: {file_path}")
+										return True
+									else:
+										# logging.info(f"No backup needed for: {file_path}")
+										return False
+
+		# Fallback to .main_backup folder if no matching date-based backup was found
+		main_file_path = os.path.join(server.main_backup_folder(), rel_path)
+		# logging.info(f"Comparing with .main_backup: {main_file_path}")
+
+		if os.path.exists(main_file_path):
+			# main_mod_time = os.path.getmtime(main_file_path)
+			main_file_size = os.path.getsize(main_file_path)
+
+			# logging.info(f".main_backup file modification time: {main_mod_time}")
+			# logging.info(f".main_backup file size: {main_file_size}")
+
+			# Compare file sizes first
+			if main_file_size != current_file_size:
+				# logging.info(f"File sizes are different. Backup needed (main backup) for: {file_path}")
+				return True
+			else:
+				# If sizes are the same, compare the file hashes
+				current_file_hash = hash_file(file_path)
+				main_file_hash = hash_file(main_file_path)
+
+				# logging.info(f"Current file hash: {current_file_hash}")
+				# logging.info(f".main_backup file hash: {main_file_hash}")
+
+				if main_file_hash != current_file_hash:
+					# logging.info(f"File hashes are different. Backup needed (main backup) for: {file_path}")
 					return True
 
-		# No updates required
+		# logging.info(f"No backup needed for: {file_path}")
 		return False
+	
+	# def file_was_updated(self, file_path: str, rel_path: str) -> bool:
+	# 	# Get the modification time of the current file
+	# 	file_mod_time = os.path.getmtime(file_path)
+		
+	# 	# Get the list of backup dates to compare
+	# 	backup_dates: list = server.has_backup_dates_to_compare()
+
+	# 	if backup_dates:
+	# 		# Iterate over the sorted date folders (newest to oldest)
+	# 		for date_folder in backup_dates:
+	# 			date_folder_path = os.path.join(server.backup_folder_name(), date_folder)
+
+	# 			if os.path.isdir(date_folder_path):
+	# 				# Sort and iterate over the time subfolders within the date folder (latest to oldest)
+	# 				time_folders = sorted(os.listdir(date_folder_path), reverse=True)
+
+	# 				for time_folder in time_folders:
+	# 					time_folder_path = os.path.join(date_folder_path, time_folder)
+
+	# 					if os.path.isdir(time_folder_path):
+	# 						updated_file_path = os.path.join(time_folder_path, rel_path)
+
+	# 						# If the backup file exists, compare the modification times
+	# 						if os.path.exists(updated_file_path):
+	# 							updated_mod_time = os.path.getmtime(updated_file_path)
+
+	# 							if updated_mod_time != file_mod_time:
+	# 								print()
+	# 								print(time_folder_path)
+	# 								print(file_path)
+	# 								print(updated_mod_time)
+	# 								print(file_mod_time)
+	# 								print(server.get_item_size(updated_file_path))
+	# 								print(server.get_item_size(file_path))
+	# 								print()
+	# 								# File modification time is different, backup is needed
+	# 								return True
+								
+	# 	# No backup dates, compare with the .main_backup folder
+	# 	main_file_path = os.path.join(server.main_backup_folder(), rel_path)
+
+	# 	if os.path.exists(main_file_path):
+	# 		main_mod_time = os.path.getmtime(main_file_path)
+
+	# 		if main_mod_time != file_mod_time:
+	# 			# File modification time is different, backup is needed
+	# 			return True
+
+	# 	# No updates required
+	# 	return False
 
 	async def make_first_backup(self):
 		# Before starting the backup, set the flag
@@ -196,7 +298,7 @@ class Daemon:
 		"""Loads the backup state from the interrupted file if it exists."""
 		if os.path.exists(server.INTERRUPTED_MAIN):
 			logging.info("Resuming backup to .main_backup from interrupted state.")
-			for path, rel_path, size in self.filtered_home_files:
+			for path, rel_path, size in server.get_filtered_home_files():
 				# Skip files that were already backed up
 				dest_path = os.path.join(self.main_backup_dir, rel_path)
 				if os.path.exists(dest_path):
@@ -208,7 +310,7 @@ class Daemon:
 			# Check for base folders before continues
 			if server.has_backup_device_enough_space(
 				file_path=None,
-				backup_list=self.filtered_home_files):
+				backup_list=server.get_filtered_home_files()):
 
 				await self.make_first_backup()
 	
@@ -245,11 +347,10 @@ class Daemon:
 
 		while True:
 			# BUG
-			# # Check if app still installed
-			# if not is_app_installed():
-			# 	print('Exiting... Application is uninstalled.')
-			# 	self.signal_handler(signal.SIGTERM, None)  # Call the signal handler to stop the daemon
-			# 	break  # Exit the loop and terminate the daemon
+			# Check if app still installed
+			if not is_app_installed():
+				print('Exiting... Application is uninstalled.')
+				break  # Exit the loop and terminate the daemon
 
 			if has_driver_connection():
 				if not connection_logged:
@@ -269,7 +370,10 @@ class Daemon:
 					logging.info("Waiting for connection to backup device...")
 					connection_logged = False  # Reset status to log when connection is re-established
 
-			await asyncio.sleep(30)  # Wait for the specified interval
+			await asyncio.sleep(60)  # Wait for the specified interval
+		
+		# Call the signal handler to stop the daemon
+		self.signal_handler(signal.SIGTERM, None)  
 
 	def signal_handler(self, signum, frame):
 		"""Handles shutdown and sleep signals."""

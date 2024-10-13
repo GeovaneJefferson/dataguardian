@@ -121,13 +121,16 @@ class UIWindow(Adw.PreferencesWindow):
         ignore_group.add(folder_select_button)
 
         # Backup Automation Switch
-        hidden_switch_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        hidden_switch_box = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL)
 
         # Create a label for the switch
         label = Gtk.Label(label="   Ignore hidden files and empty folders.")
 
         # Create the switch
         self.ignore_hidden_switch = Gtk.Switch()
+        self.ignore_hidden_switch.set_active(True)
+        self.ignore_hidden_switch.set_sensitive(False)
         self.ignore_hidden_switch.connect("notify::active", self.on_auto_backup_switch_toggled)
 
         # Add the label to the switch box
