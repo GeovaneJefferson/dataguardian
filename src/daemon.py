@@ -2,14 +2,14 @@ from has_driver_connection import has_driver_connection
 from server import *
 
 def hash_file(file_path: str) -> str:
-    """Generate the SHA-256 hash of a file."""
-    hash_sha256 = hashlib.sha256()
-    with open(file_path, "rb") as f:
-        for chunk in iter(lambda: f.read(4096), b""):
-            hash_sha256.update(chunk)
-    return hash_sha256.hexdigest()
+	"""Generate the SHA-256 hash of a file."""
+	hash_sha256 = hashlib.sha256()
+	with open(file_path, "rb") as f:
+		for chunk in iter(lambda: f.read(4096), b""):
+			hash_sha256.update(chunk)
+	return hash_sha256.hexdigest()
 
-async def backup_flatpaks_names():
+def backup_flatpaks_names():
 	flatpak_location: str = server.flatpak_txt_location()
 	flatpaks: set = set()
 
@@ -31,18 +31,22 @@ async def backup_flatpaks_names():
 def is_app_installed():
 	"""Check if the Flatpak app is still installed."""
 	try:
-		# Run the Flatpak list command to check for the app installation
+		# Run the Flatpak list command using flatpak-spawn
 		result = sub.run(
-			['flatpak', 'info', server.ID],
+			['flatpak-spawn', '--host', 'flatpak', 'list', '--app', '--columns=application'],
 			stdout=sub.PIPE,
-			stderr=sub.PIPE
+			stderr=sub.PIPE,
+			text=True  # Capture output as text
 		)
 
-		if result.returncode != 0:
-			return False
-		return True
+		# Check if the app_id is in the output
+		installed_apps = result.stdout.splitlines()
+		if server.ID in installed_apps:
+			return True
+		return False
 	except Exception as e:
 		logging.error(f"Error checking if app is installed: {e}")
+		return False
 
 
 class Daemon:
@@ -104,7 +108,7 @@ class Daemon:
 
 								# Compare file sizes first
 								if updated_file_size != current_file_size:
-									logging.info(f"File sizes are different. Backup needed for: {file_path}")
+									# logging.info(f"File sizes are different. Backup needed for: {file_path}")
 									return True
 								else:
 									# If sizes are the same, compare the file hashes
@@ -284,6 +288,13 @@ class Daemon:
 					logging.error(f"OS error backing up file {file}: {e}")
 					break
 			
+		# # TOFIX
+		# # Check if app still installed
+		# if not is_app_installed():
+		# 	# Disable real time protection
+		# 	# Call the signal handler to stop the daemon
+		# 	self.signal_handler(signal.SIGTERM, None)  
+
 		self.backup_in_progress = False
 
 	def save_backup(self, process=None):
@@ -323,7 +334,7 @@ class Daemon:
 			# Have to check the file 
 			for file_path, rel_path, size in filtered_home:
 				modded_main_file_path = os.path.join(
-					self.main_backup_dir,  os.path.relpath(file_path, server.USER_HOME))
+					self.main_backup_dir, os.path.relpath(file_path, server.USER_HOME))
 				
 				# Check for new files
 				if not os.path.exists(modded_main_file_path):
@@ -334,47 +345,54 @@ class Daemon:
 					tasks.append(self.backup_file(file_path, new_file=False))
 			
 			if tasks:
-				tasks.append(backup_flatpaks_names())
+				# tasks.append(backup_flatpaks_names()) 
+				backup_flatpaks_names()
 
 			await asyncio.gather(*tasks)
 
 		except ValueError as e:
 			logging.error(f"ValueError: {e}")
-
+			
 	async def run_backup_cycle(self):
 		checked_for_first_backup: bool = False
 		connection_logged: bool = False  # Track if connection status has already been logged
 
-		while True:
-			# BUG
-			# Check if app still installed
-			if not is_app_installed():
-				print('Exiting... Application is uninstalled.')
-				break  # Exit the loop and terminate the daemon
+		try:
+			while True:
+				# # BUG
+				# # Check if app still installed
+				# if not is_app_installed():
+				# 	logging.error(f"Error checking if app is installed: Closing daemon...")
+				# 	# Call the signal handler to stop the daemon
+				# 	self.signal_handler(signal.SIGTERM, None)  
+				
+				# Check if PID file exist
+				if not os.path.exists(server.DAEMON_PID_LOCATION):
+					self.signal_handler(signal.SIGTERM, None)  
 
-			if has_driver_connection():
-				if not connection_logged:
-					logging.info("Connection established to backup device.")
-					connection_logged = True  # Avoid logging the same message multiple times
+				if has_driver_connection():
+					if not connection_logged:
+						logging.info("Connection established to backup device.")
+						connection_logged = True  # Avoid logging the same message multiple times
 
-				# Make first backup if it's the first time and no backups have been made yet
-				if not checked_for_first_backup and server.is_first_backup():
-					await self.make_first_backup()
-					checked_for_first_backup = True
+					# Make first backup if it's the first time and no backups have been made yet
+					if not checked_for_first_backup and server.is_first_backup():
+						await self.make_first_backup()
+						checked_for_first_backup = True
 
-				# Process ongoing backups
-				await self.process_backups()
+					# Process ongoing backups
+					await self.process_backups()
 
-			else:
-				if connection_logged:
-					logging.info("Waiting for connection to backup device...")
-					connection_logged = False  # Reset status to log when connection is re-established
+				else:
+					if connection_logged:
+						logging.info("Waiting for connection to backup device...")
+						connection_logged = False  # Reset status to log when connection is re-established
 
-			await asyncio.sleep(60)  # Wait for the specified interval
-		
-		# Call the signal handler to stop the daemon
-		self.signal_handler(signal.SIGTERM, None)  
-
+				await asyncio.sleep(60)  # Wait for the specified interval
+			
+		except Exception as e:
+			logging.info(f"Error: {e}")
+			
 	def signal_handler(self, signum, frame):
 		"""Handles shutdown and sleep signals."""
 		logging.info(f"Received signal: {signum}. Stopping daemon and saving backup state.")
@@ -387,7 +405,7 @@ class Daemon:
 			backup_status = '.main_backup' if self.is_backing_up_to_main else 'other backup'
 			self.save_backup(backup_status)  # Save current state to JSON
 
-		logging.info("System is going to sleep, shut down, restart or just terminated. Stopping backup.")
+		logging.info("System is going to sleep, shut down, restart, PID file do not exist or just terminated. Stopping backup.")
 		sys.exit(0)
 
 

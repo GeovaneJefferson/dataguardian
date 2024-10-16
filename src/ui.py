@@ -86,7 +86,7 @@ class UIWindow(Adw.PreferencesWindow):
 		self.switch_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
 
 		# Create a label for the switch with your specified text
-		label = Gtk.Label(label="   Back up new and changed files in your home.")
+		label = Gtk.Label(label="   Back up new and updated files from your home.")
 
 		# Create the switch
 		self.programmatic_change = False  # Add this line

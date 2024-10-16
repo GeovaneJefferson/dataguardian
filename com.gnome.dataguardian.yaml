@@ -13,15 +13,18 @@ finish-args:
   - --filesystem=home
   - --share=network
   - --socket=session-bus  
-
+  - --talk-name=org.freedesktop.Flatpak  # Added to allow communication with the host Flatpak service
+  - --filesystem=xdg-run/flatpak  # Allow access to the flatpak-spawn socket
 modules:
   - name: dataguardian
     buildsystem: simple
+    # sources:
+    #   - type: git
+    #     url: https://github.com/GeovaneJefferson/dataguardian.git
+    #     branch: main
     sources:
-      - type: git
-        url: https://github.com/GeovaneJefferson/dataguardian.git
-        branch: main
-      
+      - type: dir
+        path: .      
     build-commands:
       # Create the main application directory
       - mkdir -p /app/share/dataguardian
@@ -59,7 +62,7 @@ modules:
     # sources:
     #   - type: git
     #     url: https://github.com/GeovaneJefferson/dataguardian.git
-    #     commit: d309566b2f3d4de7b88589867e8568246ef91234e0e857545008d3288627ffee
+    #     commit: 362dadf3d8582d82e44d1473d7a925473258e82ef3b8aa1fccc1f9ae0ff2e034
     #   - type: file
     #     path: com.gnome.dataguardian.metainfo.xml
 cleanup-commands:
