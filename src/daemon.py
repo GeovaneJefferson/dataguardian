@@ -17,14 +17,27 @@ def backup_flatpaks_names():
 		# Ensure the directory exists
 		os.makedirs(os.path.dirname(flatpak_location), exist_ok=True)
 
-		# Create the file if it doesn't exist and write the flatpak names
-		with open(flatpak_location, 'w') as configfile:
-			with os.popen(server.GET_FLATPAKS_APPLICATIONS_NAME) as flatpak_process:
-				for flatpak in flatpak_process:
+		# Create the file only if the command returns output
+		with os.popen(server.GET_FLATPAKS_APPLICATIONS_NAME) as flatpak_process:
+			flatpak_output = flatpak_process.read()
+
+			# Log if command returns no output
+			if not flatpak_output:
+				print("Flatpak command returned no output. Check if Flatpaks are installed or if the command is correct.")
+				return
+
+			# Process the output
+			with open(flatpak_location, 'w') as configfile:
+				for flatpak in flatpak_output.splitlines():
 					flatpak_name = flatpak.strip()
-					flatpaks.add(flatpak_name)
-					configfile.write(flatpak_name + '\n')
-		logging.info(f"Flatpaks installations was backed up: {flatpak_location}")
+					if flatpak_name:
+						flatpaks.add(flatpak_name)
+						configfile.write(flatpak_name + '\n') 
+
+		# Inform the user that the process is complete
+		if flatpaks:
+			logging.info(f"Flatpaks installations was backed up: {flatpak_location}")
+			
 	except IOError as e:
 		logging.error(f"Error backing up flatpaks installations: {e}")
 
@@ -65,6 +78,67 @@ class Daemon:
 
 		self.current_date = datetime.now().strftime('%d-%m-%Y')
 		self.current_time = datetime.now().strftime('%H-%M')
+
+	# TEST
+	##########################################################################
+	# EXCLUDE FOLDERS
+	def load_ignored_folders_from_config(self):
+		"""
+		Load ignored folders from the configuration file.
+		"""
+		try:
+			# Get the folder string from the config
+			folder_string = server.get_database_value(section='EXCLUDE_FOLDER', option='folders')
+			# Split the folder string into a list
+			return [folder.strip() for folder in folder_string.split(',')] if folder_string else []
+		except ValueError as e:
+			print(f"Configuration error: {e}")
+			return []
+		except Exception as e:
+			print(f"Error while loading ignored folders: {e}")
+			return []
+
+	async def get_filtered_home_files(self) -> tuple:
+		"""
+		Retrieve all files from the home directory while optionally excluding hidden items
+		and folders specified in the EXCLUDE_FOLDER config.
+		Returns a tuple containing the list of files and the total count of files.
+		"""
+		home_files = []
+		# Define a list of directories to exclude
+		excluded_dirs = ['__pycache__']
+		# Load ignored folders from config
+		ignored_folders = self.load_ignored_folders_from_config()
+
+		for root, dirs, files in os.walk(server.USER_HOME):
+			# Check for suspention
+			if self.suspend_flag:
+				self.signal_handler(signal.SIGTERM, None)  
+
+			# Exclude directories that match the ignored folders
+			if any(os.path.commonpath([root, ignored_folder]) == ignored_folder for ignored_folder in ignored_folders):
+				continue
+
+			for file in files:
+				try:
+					src_path = os.path.join(root, file)
+					rel_path = os.path.relpath(src_path, server.USER_HOME)
+					size = os.path.getsize(src_path)
+
+					# Exclude hidden files and excluded directories if specified
+					is_hidden_file = server.EXCLUDE_HIDDEN_ITENS and (
+						file.startswith('.') or any(excluded_dir in rel_path.split(os.sep) for excluded_dir in excluded_dirs)
+					)
+
+					# Exclude hidden files if specified
+					if server.EXCLUDE_HIDDEN_ITENS and (file.startswith('.') or any(part.startswith('.') or part.startswith('__pycache__') for part in rel_path.split(os.sep))):
+						continue
+
+					home_files.append((src_path, rel_path, size))
+				except Exception as e:
+					continue
+
+		return home_files
 
 	def file_was_updated(self, file_path: str, rel_path: str) -> bool:
 		"""Check if the file was updated by comparing its size and content hash (if sizes match)."""
@@ -155,61 +229,10 @@ class Daemon:
 		# logging.info(f"No backup needed for: {file_path}")
 		return False
 	
-	# def file_was_updated(self, file_path: str, rel_path: str) -> bool:
-	# 	# Get the modification time of the current file
-	# 	file_mod_time = os.path.getmtime(file_path)
-		
-	# 	# Get the list of backup dates to compare
-	# 	backup_dates: list = server.has_backup_dates_to_compare()
-
-	# 	if backup_dates:
-	# 		# Iterate over the sorted date folders (newest to oldest)
-	# 		for date_folder in backup_dates:
-	# 			date_folder_path = os.path.join(server.backup_folder_name(), date_folder)
-
-	# 			if os.path.isdir(date_folder_path):
-	# 				# Sort and iterate over the time subfolders within the date folder (latest to oldest)
-	# 				time_folders = sorted(os.listdir(date_folder_path), reverse=True)
-
-	# 				for time_folder in time_folders:
-	# 					time_folder_path = os.path.join(date_folder_path, time_folder)
-
-	# 					if os.path.isdir(time_folder_path):
-	# 						updated_file_path = os.path.join(time_folder_path, rel_path)
-
-	# 						# If the backup file exists, compare the modification times
-	# 						if os.path.exists(updated_file_path):
-	# 							updated_mod_time = os.path.getmtime(updated_file_path)
-
-	# 							if updated_mod_time != file_mod_time:
-	# 								print()
-	# 								print(time_folder_path)
-	# 								print(file_path)
-	# 								print(updated_mod_time)
-	# 								print(file_mod_time)
-	# 								print(server.get_item_size(updated_file_path))
-	# 								print(server.get_item_size(file_path))
-	# 								print()
-	# 								# File modification time is different, backup is needed
-	# 								return True
-								
-	# 	# No backup dates, compare with the .main_backup folder
-	# 	main_file_path = os.path.join(server.main_backup_folder(), rel_path)
-
-	# 	if os.path.exists(main_file_path):
-	# 		main_mod_time = os.path.getmtime(main_file_path)
-
-	# 		if main_mod_time != file_mod_time:
-	# 			# File modification time is different, backup is needed
-	# 			return True
-
-	# 	# No updates required
-	# 	return False
-
 	async def make_first_backup(self):
 		# Before starting the backup, set the flag
 		self.is_backing_up_to_main = True
-		filtered_home: tuple = await server.get_filtered_home_files()
+		filtered_home: tuple = await self.get_filtered_home_files()
 
 		for path, rel_path, size in filtered_home:
 			# Skip files that were already backed up
@@ -305,31 +328,33 @@ class Daemon:
 					f.write('Backup to .main_backup was interrupted.')
 				logging.info(f"Created interrupted file: {server.INTERRUPTED_MAIN}")
 	
-	async def load_backup(self):
-		"""Loads the backup state from the interrupted file if it exists."""
-		if os.path.exists(server.INTERRUPTED_MAIN):
-			logging.info("Resuming backup to .main_backup from interrupted state.")
-			for path, rel_path, size in server.get_filtered_home_files():
-				# Skip files that were already backed up
-				dest_path = os.path.join(self.main_backup_dir, rel_path)
-				if os.path.exists(dest_path):
-					continue
-				await server.backup_file(path)
-		else:
-			logging.info("Starting fresh backup to .main_backup.")
+	# async def load_backup(self):
+	# 	"""Loads the backup state from the interrupted file if it exists."""
+	# 	if os.path.exists(server.INTERRUPTED_MAIN):
+	# 		logging.info("Resuming backup to .main_backup from interrupted state.")
+	# 		for path, rel_path, size in self.get_filtered_home_files():
+	# 			# Skip files that were already backed up
+	# 			dest_path = os.path.join(self.main_backup_dir, rel_path)
+	# 			if os.path.exists(dest_path):
+	# 				continue
+	# 			await self.backup_file(path)
+	# 	else:
+	# 		logging.info("Starting fresh backup to .main_backup.")
 
-			# Check for base folders before continues
-			if server.has_backup_device_enough_space(
-				file_path=None,
-				backup_list=server.get_filtered_home_files()):
+	# 		# Check for base folders before continues
+	# 		if server.has_backup_device_enough_space(
+	# 			file_path=None,
+	# 			backup_list=self.get_filtered_home_files()):
+	# 			# backup_list=server.get_filtered_home_files()):
 
-				await self.make_first_backup()
+	# 			await self.make_first_backup()
 	
 	async def process_backups(self):
 		tasks: list = []
 
 		try:
-			filtered_home: tuple = await server.get_filtered_home_files()
+			filtered_home: tuple = await self.get_filtered_home_files()
+			# filtered_home: tuple = await server.get_filtered_home_files()
 
 			# Have to check the file 
 			for file_path, rel_path, size in filtered_home:
@@ -347,6 +372,7 @@ class Daemon:
 			if tasks:
 				# tasks.append(backup_flatpaks_names()) 
 				backup_flatpaks_names()
+				# await asyncio.sleep(2)  # Wait for the specified interval
 
 			await asyncio.gather(*tasks)
 
@@ -380,6 +406,10 @@ class Daemon:
 						await self.make_first_backup()
 						checked_for_first_backup = True
 
+					# # Continue backup cycle if not suspended
+					# if not self.suspend_flag:
+					#     await self.process_backups()
+					
 					# Process ongoing backups
 					await self.process_backups()
 
@@ -392,7 +422,12 @@ class Daemon:
 			
 		except Exception as e:
 			logging.info(f"Error: {e}")
-			
+	
+	def resume_handler(self, signum, frame):
+		"""Handles wake-up signals (SIGCONT) and resumes backup operations."""
+		logging.info(f"Received resume signal: {signum}. Resuming operations.")
+		self.suspend_flag = False  # Clear suspend flag when system wakes up
+
 	def signal_handler(self, signum, frame):
 		"""Handles shutdown and sleep signals."""
 		logging.info(f"Received signal: {signum}. Stopping daemon and saving backup state.")
@@ -418,5 +453,6 @@ if __name__ == "__main__":
 	setproctitle.setproctitle(f'{server.APP_NAME} - daemon')
 	signal.signal(signal.SIGTERM, daemon.signal_handler)  # Termination signal
 	signal.signal(signal.SIGINT, daemon.signal_handler)   # Interrupt signal (Ctrl+C)
+	signal.signal(signal.SIGCONT, daemon.resume_handler)  # Continue signal (wake up)
 	logging.info("Starting file monitoring...")
 	asyncio.run(daemon.run_backup_cycle())

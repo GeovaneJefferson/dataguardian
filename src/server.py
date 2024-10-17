@@ -225,54 +225,54 @@ class SERVER:
 		except Exception as e:
 			logging.error('Error while trying to find if is the first backup.')
 
-	##########################################################################
-	# EXCLUDE FOLDERS
-	def load_ignored_folders_from_config(self):
-		"""
-		Load ignored folders from the configuration file.
-		"""
-		try:
-			# Get the folder string from the config
-			folder_string = self.get_database_value(section='EXCLUDE_FOLDER', option='folders')
-			# Split the folder string into a list
-			return [folder.strip() for folder in folder_string.split(',')] if folder_string else []
-		except ValueError as e:
-			print(f"Configuration error: {e}")
-			return []
-		except Exception as e:
-			print(f"Error while loading ignored folders: {e}")
-			return []
+	# ##########################################################################
+	# # EXCLUDE FOLDERS
+	# def load_ignored_folders_from_config(self):
+	# 	"""
+	# 	Load ignored folders from the configuration file.
+	# 	"""
+	# 	try:
+	# 		# Get the folder string from the config
+	# 		folder_string = self.get_database_value(section='EXCLUDE_FOLDER', option='folders')
+	# 		# Split the folder string into a list
+	# 		return [folder.strip() for folder in folder_string.split(',')] if folder_string else []
+	# 	except ValueError as e:
+	# 		print(f"Configuration error: {e}")
+	# 		return []
+	# 	except Exception as e:
+	# 		print(f"Error while loading ignored folders: {e}")
+	# 		return []
 
-	async def get_filtered_home_files(self) -> tuple:
-		"""
-		Retrieve all files from the home directory while optionally excluding hidden items
-		and folders specified in the EXCLUDE_FOLDER config.
-		Returns a tuple containing the list of files and the total count of files.
-		"""
-		home_files = []
-		# Load ignored folders from config
-		ignored_folders = self.load_ignored_folders_from_config()
+	# async def get_filtered_home_files(self) -> tuple:
+	# 	"""
+	# 	Retrieve all files from the home directory while optionally excluding hidden items
+	# 	and folders specified in the EXCLUDE_FOLDER config.
+	# 	Returns a tuple containing the list of files and the total count of files.
+	# 	"""
+	# 	home_files = []
+	# 	# Load ignored folders from config
+	# 	ignored_folders = self.load_ignored_folders_from_config()
 
-		for root, dirs, files in os.walk(self.USER_HOME):
-			# Exclude directories that match the ignored folders
-			if any(os.path.commonpath([root, ignored_folder]) == ignored_folder for ignored_folder in ignored_folders):
-				continue
+	# 	for root, dirs, files in os.walk(self.USER_HOME):
+	# 		# Exclude directories that match the ignored folders
+	# 		if any(os.path.commonpath([root, ignored_folder]) == ignored_folder for ignored_folder in ignored_folders):
+	# 			continue
 
-			for file in files:
-				try:
-					src_path = os.path.join(root, file)
-					rel_path = os.path.relpath(src_path, self.USER_HOME)
-					size = os.path.getsize(src_path)
+	# 		for file in files:
+	# 			try:
+	# 				src_path = os.path.join(root, file)
+	# 				rel_path = os.path.relpath(src_path, self.USER_HOME)
+	# 				size = os.path.getsize(src_path)
 
-					# Exclude hidden files if specified
-					if self.EXCLUDE_HIDDEN_ITENS and (file.startswith('.') or any(part.startswith('.') for part in rel_path.split(os.sep))):
-						continue
+	# 				# Exclude hidden files if specified
+	# 				if self.EXCLUDE_HIDDEN_ITENS and (file.startswith('.') or any(part.startswith('.') for part in rel_path.split(os.sep))):
+	# 					continue
 
-					home_files.append((src_path, rel_path, size))
-				except Exception as e:
-					continue
+	# 				home_files.append((src_path, rel_path, size))
+	# 			except Exception as e:
+	# 				continue
 
-		return home_files
+	# 	return home_files
 
 	# BACKUP	
 	# async def get_filtered_home_files(self) -> tuple:
@@ -352,7 +352,7 @@ class SERVER:
 				return True
 			elif value == 'False' or value == 'false' or value == 'No':
 				return False
-			elif value == 'None' or value is None:
+			elif value == 'None' or value == ' ' or value is None:
 				return None
 			else:
 				return value

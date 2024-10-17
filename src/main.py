@@ -11,6 +11,7 @@ class Application(Adw.Application):
         win = UIWindow(application=self)
         win.present()
 
+
 def main():
     app = Application()
     return app.run(sys.argv)

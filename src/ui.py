@@ -46,11 +46,14 @@ class UIWindow(Adw.PreferencesWindow):
 
 		# General Tab
 		general_page = Adw.PreferencesPage()
-		general_group = Adw.PreferencesGroup(title="Storage")
+		general_group = Adw.PreferencesGroup(
+			title="Storage")
 
 		# Location (ComboBox for backup location)
-		self.location_row = Adw.ComboRow(title="Location", selected=0)
-		self.location_row.set_model(Gtk.StringList.new(["Local Folder"]))
+		self.location_row = Adw.ComboRow(
+			title="Location", 
+			selected=0)
+		self.location_row.set_model(Gtk.StringList.new(["Local Storage"]))
 		self.location_row.connect("notify::selected", self.on_location_changed)
 
 		# Folder button
@@ -59,13 +62,16 @@ class UIWindow(Adw.PreferencesWindow):
 		folder_button.connect("clicked", self.on_folder_button_clicked)
 
 		# Create box to hold folder button
-		folder_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-		folder_box.append(folder_button)
+		folder_box = Gtk.Box(
+			orientation=Gtk.Orientation.HORIZONTAL, 
+			spacing=10)
+		# folder_box.append(folder_button)
 		folder_box.set_sensitive(False)
 		self.location_row.add_suffix(folder_box)
 
 		# Backup Device (Expandable Row)
-		self.backup_device_row = Adw.ExpanderRow(title="Backup Device")
+		self.backup_device_row = Adw.ExpanderRow(
+			title="Backup Device")
 		self.backup_device_list = Gtk.ComboBoxText()
 		self.backup_device_list.set_id_column(0)
 		self.backup_device_list.connect("changed", self.on_backup_device_selected)  # Connect the signal
@@ -80,17 +86,32 @@ class UIWindow(Adw.PreferencesWindow):
 		# PAGES - GENERAL - SCHEDULE
 		##########################################################################
 		# Schedule section
-		schedule_group = Adw.PreferencesGroup(title="Real-time protection")
+		schedule_group = Adw.PreferencesGroup(
+			title="Real-time protection")
 
 		# Backup Automation Switch
 		self.switch_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
 
 		# Create a label for the switch with your specified text
-		label = Gtk.Label(label="   Back up new and updated files from your home.")
+		label = Gtk.Label(
+			label="   Back up new and updated files from your home.")
 
 		# Create the switch
-		self.programmatic_change = False  # Add this line
+		self.programmatic_change = False  
 		self.auto_backup_switch = Gtk.Switch()
+
+		# Only enable switch if user has registered a backup device
+		driver_name = server.get_database_value(
+			section='DRIVER',
+			option='driver_name')
+		 
+		if driver_name != '':
+			# Enable switch
+			self.auto_backup_switch.set_sensitive(True)
+		else:
+			# Disable switch
+			self.auto_backup_switch.set_sensitive(False)
+
 		# self.auto_backup_switch.set_tooltip_text('Coming soon...')
 		self.auto_backup_switch.connect("notify::active", self.on_auto_backup_switch_toggled)
 
@@ -402,6 +423,9 @@ class UIWindow(Adw.PreferencesWindow):
 			option='driver_name',
 			value=str(selected_device)
 		)
+
+		# Enable switch
+		self.auto_backup_switch.set_sensitive(True)
 
 	def available_devices_location(self, button=None):
 		location = device_location()  # Get backup device location. /media or /run
