@@ -1,29 +1,32 @@
 from server import *
-from ui import UIWindow 
+from ui import UIWindow, MainWindow
 
 
 class Application(Adw.Application):
     def __init__(self):
         super().__init__(application_id=SERVER().ID,
-                         flags=Gio.ApplicationFlags.FLAGS_NONE)
+                        flags=Gio.ApplicationFlags.FLAGS_NONE)
 
     def do_activate(self):
         win = UIWindow(application=self)
+        # test = MainWindow(application=self)
+        # test.present()
         win.present()
 
 
 def main():
     app = Application()
     return app.run(sys.argv)
-
+    
 
 if __name__ == "__main__":
     main()
 
-# DOTO
+
+# TODO
 '''
-1 - user may only activate realtime protection after choose a backup device.
-2 - After enable/disable realtime protection, user will be unable
-    to enable/disable for x seconds. (To prevent crashes in the daemon).
-3 - Fix options to user select folder to exclude from backing up.  
+1 - If backup if being made, user should be unable to:
+    * Change backup device.
+    * Disable realtime protection.
+    * Disable Exclude options.
 '''

@@ -46,13 +46,6 @@ class SERVER:
 		# Format the current date and time to get the day name
 		self.DAY_NAME: str = datetime.now().strftime("%A").upper().strip()  # SUNDAY, MONDAY...
 
-		self.EXCLUDE_ITENS: bool = True
-		self.EXCLUDE_HIDDEN_ITENS: bool = True
-
-		self.EXCLUDE_FILES: list = [
-			'.cache', 'cache', '*.tmp',
-			'Downloads', 'Games', 'steam', 'snap']
-
 		################################################################################
 		# APP SETTINGS
 		################################################################################
@@ -97,6 +90,8 @@ class SERVER:
 		# self.CONF_LOCATION: str = 'src/database/config.conf'
 		self.CONF_LOCATION: str = os.path.join(Path.home(), '.var', 'app', self.ID, 'config', 'config.conf')
 		# Check if the config file exists and create it if it doesn't
+
+		self.autostart_file: str = os.path.expanduser(f"~/.config/autostart/{self.APP_NAME.lower()}_autostart.desktop")
 
 		if not os.path.exists(self.CONF_LOCATION):
 			self.create_default_config()
@@ -159,34 +154,6 @@ class SERVER:
 		with open(self.CONF_LOCATION, 'w') as config_file:
 			self.CONF.write(config_file)
 
-	# def get_filtered_home_files(self) -> list:
-	# 	"""
-	# 	Retrieve all files from the home directory while optionally excluding hidden items.
-	# 	"""
-	# 	home_files: list = []
-	# 	for root, dirs, files in os.walk(self.USER_HOME):
-	# 		for file in files:
-	# 			try:
-	# 				src_path = os.path.join(root, file)
-	# 				rel_path = os.path.relpath(src_path, self.USER_HOME)
-	# 				size = os.path.getsize(src_path)
-	# 				only_dirname = src_path.split('/')[3]
-	#
-	# 				# Exclude hidden items if set in serverMain
-	# 				if self.EXCLUDE_HIDDEN_ITENS and only_dirname.startswith('.'):
-	# 					continue
-	#
-	# 				# Skip .caches and caches folders
-	# 				if only_dirname in self.EXCLUDE_FILES:
-	# 					continue
-	#
-	# 				home_files.append((src_path, rel_path, size))
-	# 			except Exception:
-	# 				continue
-	#
-	# 	print(f"\033[92m[✓]\033[0m Home filtered.")
-	# 	return home_files
-	
 	def is_daemon_running(self):
 		"""Check if the daemon is already running by checking the PID in the Flatpak sandbox."""
 		if os.path.exists(self.DAEMON_PID_LOCATION):
@@ -222,88 +189,10 @@ class SERVER:
 			# 	if os.path.exists(self.INTERRUPTED_MAIN):
 			# 		return True
 			# 	return False
+		except FileNotFoundError:
+			return True
 		except Exception as e:
 			logging.error('Error while trying to find if is the first backup.')
-
-	# ##########################################################################
-	# # EXCLUDE FOLDERS
-	# def load_ignored_folders_from_config(self):
-	# 	"""
-	# 	Load ignored folders from the configuration file.
-	# 	"""
-	# 	try:
-	# 		# Get the folder string from the config
-	# 		folder_string = self.get_database_value(section='EXCLUDE_FOLDER', option='folders')
-	# 		# Split the folder string into a list
-	# 		return [folder.strip() for folder in folder_string.split(',')] if folder_string else []
-	# 	except ValueError as e:
-	# 		print(f"Configuration error: {e}")
-	# 		return []
-	# 	except Exception as e:
-	# 		print(f"Error while loading ignored folders: {e}")
-	# 		return []
-
-	# async def get_filtered_home_files(self) -> tuple:
-	# 	"""
-	# 	Retrieve all files from the home directory while optionally excluding hidden items
-	# 	and folders specified in the EXCLUDE_FOLDER config.
-	# 	Returns a tuple containing the list of files and the total count of files.
-	# 	"""
-	# 	home_files = []
-	# 	# Load ignored folders from config
-	# 	ignored_folders = self.load_ignored_folders_from_config()
-
-	# 	for root, dirs, files in os.walk(self.USER_HOME):
-	# 		# Exclude directories that match the ignored folders
-	# 		if any(os.path.commonpath([root, ignored_folder]) == ignored_folder for ignored_folder in ignored_folders):
-	# 			continue
-
-	# 		for file in files:
-	# 			try:
-	# 				src_path = os.path.join(root, file)
-	# 				rel_path = os.path.relpath(src_path, self.USER_HOME)
-	# 				size = os.path.getsize(src_path)
-
-	# 				# Exclude hidden files if specified
-	# 				if self.EXCLUDE_HIDDEN_ITENS and (file.startswith('.') or any(part.startswith('.') for part in rel_path.split(os.sep))):
-	# 					continue
-
-	# 				home_files.append((src_path, rel_path, size))
-	# 			except Exception as e:
-	# 				continue
-
-	# 	return home_files
-
-	# BACKUP	
-	# async def get_filtered_home_files(self) -> tuple:
-	# 	"""
-	# 	Retrieve all files from the home directory while optionally excluding hidden items.
-	# 	Returns a tuple containing the list of files and the total count of files.
-	# 	"""
-	# 	home_files: list = []
-	# 	for root, dirs, files in os.walk(self.USER_HOME):
-	# 		for file in files:
-	# 			try:
-	# 				src_path = os.path.join(root, file)
-	# 				rel_path = os.path.relpath(src_path, self.USER_HOME)
-	# 				size = os.path.getsize(src_path)
-
-	# 				# Exclude hidden items if set in serverMain
-	# 				if self.EXCLUDE_HIDDEN_ITENS and (file.startswith('.') or any(part.startswith('.') for part in rel_path.split(os.sep))):
-	# 					continue
-
-	# 				# Check if the directory or file matches any exclusion patterns
-	# 				if any(fnmatch.fnmatch(os.path.basename(root), pattern) for pattern in self.EXCLUDE_FILES) or \
-	# 				   any(fnmatch.fnmatch(file, pattern) for pattern in self.EXCLUDE_FILES) or \
-	# 				   any(fnmatch.fnmatch(part, pattern) for part in rel_path.split(os.sep) for pattern in self.EXCLUDE_FILES):
-	# 					continue
-
-	# 				home_files.append((src_path, rel_path, size))
-	# 			except Exception as e:
-	# 				continue
-
-	# 	return home_files
-	# 	# return home_files, len(home_files)
 
 	async def delete_oldest_backup_folder(self):
 		"""Deletes the oldest backup folder from the updates directory."""
@@ -395,22 +284,22 @@ class SERVER:
 				index += 1
 			return f"{size:.2f} {suffixes[index]}"
 
-	def count_total_files(self, path: str) -> int:
-		total_files: int = 0
-		# Load ignored folders from config
-		ignored_folders = self.load_ignored_folders_from_config()
+	# def count_total_files(self, path: str) -> int:
+	# 	total_files: int = 0
+	# 	# Load ignored folders from config
+	# 	ignored_folders = self.load_ignored_folders_from_config()
 
-		for root, dirs, files in os.walk(path):
-			for file in files:
-				src_path: str = os.path.join(root, file)
-				only_dirname: str =  src_path.split('/')[3]
+	# 	for root, dirs, files in os.walk(path):
+	# 		for file in files:
+	# 			src_path: str = os.path.join(root, file)
+	# 			only_dirname: str =  src_path.split('/')[3]
 
-				# Exclude directories that match the ignored folders
-				if any(os.path.commonpath([root, ignored_folder]) == ignored_folder for ignored_folder in ignored_folders):
-					continue
+	# 			# Exclude directories that match the ignored folders
+	# 			if any(os.path.commonpath([root, ignored_folder]) == ignored_folder for ignored_folder in ignored_folders):
+	# 				continue
 
-				total_files += 1
-		return total_files
+	# 			total_files += 1
+	# 	return total_files
 	
 	def has_backup_device_enough_space(
 			self, 

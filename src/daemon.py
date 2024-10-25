@@ -73,6 +73,7 @@ class Daemon:
 		self.backup_in_progress: bool = False
 		self.is_backing_up_to_main: bool = False
 		self.suspend_flag = False  # Flag to handle suspension
+		self.loop = asyncio.get_event_loop()
 		self.main_backup_dir: str = server.main_backup_folder()
 		self.updates_backup_dir: str = server.backup_folder_name()
 
@@ -88,7 +89,10 @@ class Daemon:
 		"""
 		try:
 			# Get the folder string from the config
-			folder_string = server.get_database_value(section='EXCLUDE_FOLDER', option='folders')
+			folder_string = server.get_database_value(
+				section='EXCLUDE_FOLDER', 
+				option='folders')
+			
 			# Split the folder string into a list
 			return [folder.strip() for folder in folder_string.split(',')] if folder_string else []
 		except ValueError as e:
@@ -100,22 +104,27 @@ class Daemon:
 
 	async def get_filtered_home_files(self) -> tuple:
 		"""
-		Retrieve all files from the home directory while optionally excluding hidden items
-		and folders specified in the EXCLUDE_FOLDER config.
+		Retrieve all files from the home directory while optionally excluding hidden items,
+		unfinished downloads (e.g., .crdownload), and folders specified in the EXCLUDE_FOLDER config.
 		Returns a tuple containing the list of files and the total count of files.
 		"""
 		home_files = []
-		# Define a list of directories to exclude
-		excluded_dirs = ['__pycache__']
+		excluded_dirs = ['__pycache__']  # Folders to exclude
+		excluded_extensions = ['.crdownload', '.part', '.tmp']  # File extensions to exclude unfinished files
+
 		# Load ignored folders from config
 		ignored_folders = self.load_ignored_folders_from_config()
+		
+		exclude_hidden_itens: bool = server.get_database_value(
+			section='EXCLUDE',
+			option='exclude_hidden_itens')
 
 		for root, dirs, files in os.walk(server.USER_HOME):
-			# Check for suspention
+			# Check for suspension flag and handle it
 			if self.suspend_flag:
-				self.signal_handler(signal.SIGTERM, None)  
+				self.signal_handler(signal.SIGTERM, None)  # Handle suspension as needed
 
-			# Exclude directories that match the ignored folders
+			# Exclude directories that match any ignored folder
 			if any(os.path.commonpath([root, ignored_folder]) == ignored_folder for ignored_folder in ignored_folders):
 				continue
 
@@ -125,20 +134,73 @@ class Daemon:
 					rel_path = os.path.relpath(src_path, server.USER_HOME)
 					size = os.path.getsize(src_path)
 
-					# Exclude hidden files and excluded directories if specified
-					is_hidden_file = server.EXCLUDE_HIDDEN_ITENS and (
-						file.startswith('.') or any(excluded_dir in rel_path.split(os.sep) for excluded_dir in excluded_dirs)
-					)
+					# # Exclude hidden files, files in excluded directories, and unfinished files by extension
+					# is_hidden_file = server.EXCLUDE_HIDDEN_ITENS and (
+					# 	file.startswith('.') or
+					# 	any(part.startswith('.') or part in excluded_dirs for part in rel_path.split(os.sep))
+					# )
+					
+					# Exclude hidden files if the option is enabled
+					if exclude_hidden_itens:  
+						is_hidden_file = (
+							file.startswith('.') or
+							any(part.startswith('.') or part in excluded_dirs for part in rel_path.split(os.sep)))
+					else:
+						is_hidden_file = False  # Do not exclude hidden files if option is disabled
 
-					# Exclude hidden files if specified
-					if server.EXCLUDE_HIDDEN_ITENS and (file.startswith('.') or any(part.startswith('.') or part.startswith('__pycache__') for part in rel_path.split(os.sep))):
-						continue
+					is_unfinished_file = any(file.endswith(ext) for ext in excluded_extensions)
 
+					if is_hidden_file or is_unfinished_file:
+						continue  # Skip hidden, excluded, or unfinished files
+					
+					# Add the file info to the home_files list
 					home_files.append((src_path, rel_path, size))
-				except Exception as e:
+				except:
 					continue
 
 		return home_files
+
+	# async def get_filtered_home_files(self) -> tuple:
+	# 	"""
+	# 	Retrieve all files from the home directory while optionally excluding hidden items
+	# 	and folders specified in the EXCLUDE_FOLDER config.
+	# 	Returns a tuple containing the list of files and the total count of files.
+	# 	"""
+	# 	home_files = []
+	# 	# Define a list of directories to exclude
+	# 	excluded_dirs = ['__pycache__', 'crdownload']
+	# 	# Load ignored folders from config
+	# 	ignored_folders = self.load_ignored_folders_from_config()
+
+	# 	for root, dirs, files in os.walk(server.USER_HOME):
+	# 		# Check for suspention
+	# 		if self.suspend_flag:
+	# 			self.signal_handler(signal.SIGTERM, None)  
+
+	# 		# Exclude directories that match the ignored folders
+	# 		if any(os.path.commonpath([root, ignored_folder]) == ignored_folder for ignored_folder in ignored_folders):
+	# 			continue
+
+	# 		for file in files:
+	# 			try:
+	# 				src_path = os.path.join(root, file)
+	# 				rel_path = os.path.relpath(src_path, server.USER_HOME)
+	# 				size = os.path.getsize(src_path)
+
+	# 				# Exclude hidden files and excluded directories if specified
+	# 				is_hidden_file = server.EXCLUDE_HIDDEN_ITENS and (
+	# 					file.startswith('.') or any(excluded_dir in rel_path.split(os.sep) for excluded_dir in excluded_dirs)
+	# 				)
+
+	# 				# Exclude hidden files if specified
+	# 				if server.EXCLUDE_HIDDEN_ITENS and (file.startswith('.') or any(part.startswith('.') or part.startswith('__pycache__') for part in rel_path.split(os.sep))):
+	# 					continue
+
+	# 				home_files.append((src_path, rel_path, size))
+	# 			except Exception as e:
+	# 				continue
+
+	# 	return home_files
 
 	def file_was_updated(self, file_path: str, rel_path: str) -> bool:
 		"""Check if the file was updated by comparing its size and content hash (if sizes match)."""
@@ -235,6 +297,11 @@ class Daemon:
 		filtered_home: tuple = await self.get_filtered_home_files()
 
 		for path, rel_path, size in filtered_home:
+			# Check if PID file do not exist
+			if not os.path.exists(server.DAEMON_PID_LOCATION):
+				self.signal_handler(signal.SIGTERM, None)
+				return
+
 			# Skip files that were already backed up
 			dest_path = os.path.join(self.main_backup_dir, rel_path)
 			if os.path.exists(dest_path):
@@ -326,28 +393,50 @@ class Daemon:
 			if not os.path.exists(server.INTERRUPTED_MAIN):
 				with open(server.INTERRUPTED_MAIN, 'w') as f:
 					f.write('Backup to .main_backup was interrupted.')
+
 				logging.info(f"Created interrupted file: {server.INTERRUPTED_MAIN}")
 	
-	# async def load_backup(self):
-	# 	"""Loads the backup state from the interrupted file if it exists."""
-	# 	if os.path.exists(server.INTERRUPTED_MAIN):
-	# 		logging.info("Resuming backup to .main_backup from interrupted state.")
-	# 		for path, rel_path, size in self.get_filtered_home_files():
-	# 			# Skip files that were already backed up
-	# 			dest_path = os.path.join(self.main_backup_dir, rel_path)
-	# 			if os.path.exists(dest_path):
-	# 				continue
-	# 			await self.backup_file(path)
-	# 	else:
-	# 		logging.info("Starting fresh backup to .main_backup.")
+	async def load_backup(self):
+		"""Loads the backup state from the interrupted file if it exists."""
+		if os.path.exists(server.INTERRUPTED_MAIN):
+			logging.info("Resuming backup to .main_backup from interrupted state.")
 
-	# 		# Check for base folders before continues
-	# 		if server.has_backup_device_enough_space(
-	# 			file_path=None,
-	# 			backup_list=self.get_filtered_home_files()):
-	# 			# backup_list=server.get_filtered_home_files()):
+			# Before starting the backup, set the flag
+			self.is_backing_up_to_main = True
+			filtered_home: tuple = await self.get_filtered_home_files()
 
-	# 			await self.make_first_backup()
+			for path, rel_path, size in filtered_home:
+				# Check if PID file do not exist
+				if not os.path.exists(server.DAEMON_PID_LOCATION):
+					self.signal_handler(signal.SIGTERM, None)
+					return
+
+				# Skip files that were already backed up
+				dest_path = os.path.join(self.main_backup_dir, rel_path)
+				if os.path.exists(dest_path):
+					continue
+
+				await self.backup_file(file=path, new_file=True)
+
+			logging.info("Successfully back up to .main.")
+
+			# After finishing the backup process, reset the flag
+			self.is_backing_up_to_main = False
+
+			# After finishing the backup process, you can remove the interrupted flag
+			if os.path.exists(server.INTERRUPTED_MAIN):
+				os.remove(server.INTERRUPTED_MAIN)
+
+		# else:
+		# 	logging.info("Starting fresh backup to .main_backup.")
+
+		# 	# Check for base folders before continues
+		# 	if server.has_backup_device_enough_space(
+		# 		file_path=None,
+		# 		backup_list=self.get_filtered_home_files()):
+		# 		# backup_list=server.get_filtered_home_files()):
+
+		# 		await self.make_first_backup()
 	
 	async def process_backups(self):
 		tasks: list = []
@@ -361,6 +450,11 @@ class Daemon:
 				modded_main_file_path = os.path.join(
 					self.main_backup_dir, os.path.relpath(file_path, server.USER_HOME))
 				
+				# Check if PID file do not exist
+				if not os.path.exists(server.DAEMON_PID_LOCATION):
+					self.signal_handler(signal.SIGTERM, None)
+					return
+				
 				# Check for new files
 				if not os.path.exists(modded_main_file_path):
 					tasks.append(self.backup_file(file_path, new_file=True))
@@ -370,9 +464,7 @@ class Daemon:
 					tasks.append(self.backup_file(file_path, new_file=False))
 			
 			if tasks:
-				# tasks.append(backup_flatpaks_names()) 
 				backup_flatpaks_names()
-				# await asyncio.sleep(2)  # Wait for the specified interval
 
 			await asyncio.gather(*tasks)
 
@@ -384,18 +476,27 @@ class Daemon:
 		connection_logged: bool = False  # Track if connection status has already been logged
 
 		try:
+			# Check for unfinished backup to .main
+			await self.load_backup()
+
 			while True:
-				# # BUG
+				# BUG
+				'''
+				Because is a flatpak, can not use '	['flatpak-spawn', '--host', 'flatpak', 'list', '--app', '--columns=application'],
+				is a sandbox. Maybe, create a simple script, and send to /home/$USER/.var/app/com.gnome.dataguardian/config/, then call from there.
+				'''
 				# # Check if app still installed
 				# if not is_app_installed():
 				# 	logging.error(f"Error checking if app is installed: Closing daemon...")
 				# 	# Call the signal handler to stop the daemon
 				# 	self.signal_handler(signal.SIGTERM, None)  
 				
-				# Check if PID file exist
+				# Check if PID file do not exist
 				if not os.path.exists(server.DAEMON_PID_LOCATION):
-					self.signal_handler(signal.SIGTERM, None)  
-
+					logging.error("PID file missing. Daemon requires exit.")
+					self.signal_handler(signal.SIGTERM, None)
+					return
+	
 				if has_driver_connection():
 					if not connection_logged:
 						logging.info("Connection established to backup device.")
@@ -406,10 +507,6 @@ class Daemon:
 						await self.make_first_backup()
 						checked_for_first_backup = True
 
-					# # Continue backup cycle if not suspended
-					# if not self.suspend_flag:
-					#     await self.process_backups()
-					
 					# Process ongoing backups
 					await self.process_backups()
 
@@ -430,7 +527,7 @@ class Daemon:
 
 	def signal_handler(self, signum, frame):
 		"""Handles shutdown and sleep signals."""
-		logging.info(f"Received signal: {signum}. Stopping daemon and saving backup state.")
+		# logging.info(f"Received signal: {signum}. Stopping daemon and saving backup state.")
 
 		# Set the suspend flag to prevent further backups
 		self.suspend_flag = True
@@ -441,7 +538,13 @@ class Daemon:
 			self.save_backup(backup_status)  # Save current state to JSON
 
 		logging.info("System is going to sleep, shut down, restart, PID file do not exist or just terminated. Stopping backup.")
-		sys.exit(0)
+		try:
+			self.loop.stop()
+		except:
+			pass
+
+		exit()
+		# sys.exit(0)
 
 
 if __name__ == "__main__":
@@ -451,8 +554,11 @@ if __name__ == "__main__":
 	server.setup_logging()
 
 	setproctitle.setproctitle(f'{server.APP_NAME} - daemon')
+
 	signal.signal(signal.SIGTERM, daemon.signal_handler)  # Termination signal
 	signal.signal(signal.SIGINT, daemon.signal_handler)   # Interrupt signal (Ctrl+C)
 	signal.signal(signal.SIGCONT, daemon.resume_handler)  # Continue signal (wake up)
+
 	logging.info("Starting file monitoring...")
+
 	asyncio.run(daemon.run_backup_cycle())

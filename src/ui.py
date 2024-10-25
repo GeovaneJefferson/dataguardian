@@ -10,9 +10,56 @@ server = SERVER()
 # BUG
 # In auto select backup, is auto selecting the first users backup device.
 
+class MainWindow(Gtk.ApplicationWindow):
+	def __init__(self, *args, **kwargs):
+		super().__init__(*args, **kwargs)
+		self.box1 = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+		self.set_child(self.box1)
+
+		self.button = Gtk.Button(label="Hello")
+		self.box1.append(self.button)
+		self.button.connect('clicked', self.hello)
+		
+		self.header = Gtk.HeaderBar()
+		self.set_titlebar(self.header)
+
+		self.open_button = Gtk.Button(label="Open")
+		self.header.pack_start(self.open_button)
+
+		self.open_button.set_icon_name("document-open-symbolic")
+
+		# Create a new "Action"
+		action = Gio.SimpleAction.new("something", None)
+		# action.connect("activate", self.print_something)
+		self.add_action(action)  # Here the action is being added to the window, but you could add it to the
+									# application or an "ActionGroup"
+
+		# Create a new menu, containing that action
+		menu = Gio.Menu.new()
+		menu.append("Do Something", "win.something")  # Or you would do app.something if you had attached the
+														# action to the application
+
+		# Create a popover
+		self.popover = Gtk.PopoverMenu()  # Create a new popover menu
+		self.popover.set_menu_model(menu)
+
+		# Create a menu button
+		self.hamburger = Gtk.MenuButton()
+		self.hamburger.set_popover(self.popover)
+		self.hamburger.set_icon_name("open-menu-symbolic")  # Give it a nice icon
+
+		# Add menu button to the header bar
+		self.header.pack_start(self.hamburger)
+
+	def hello(self, button):
+		print("Hello world")
+
 class UIWindow(Adw.PreferencesWindow):
 	def __init__(self, **kwargs):
 		super().__init__(**kwargs)
+		self.programmatic_change = False  
+		self.switch_cooldown_active = False  # To track the cooldown state
+
 		##########################################################################
 		# WINDOW
 		##########################################################################
@@ -34,18 +81,17 @@ class UIWindow(Adw.PreferencesWindow):
 
 		# Auto-select 'Backup Automatically'
 		self.auto_select_auto_backup()
-
+		
+		# Auto-select 'Hidden files'
+		self.auto_select_hidden_itens()
+	
 	def setup_preferences_pages(self):
-		# Setting up the preferences pages...
 		##########################################################################
 		# PAGES - General
 		##########################################################################
 		# General Tab
 		general_page = Adw.PreferencesPage()
-		# general_page.set_icon_name("folder-open-symbolic")
-
-		# General Tab
-		general_page = Adw.PreferencesPage()
+		general_page.set_icon_name("settings-symbolic")
 		general_group = Adw.PreferencesGroup(
 			title="Storage")
 
@@ -97,7 +143,6 @@ class UIWindow(Adw.PreferencesWindow):
 			label="   Back up new and updated files from your home.")
 
 		# Create the switch
-		self.programmatic_change = False  
 		self.auto_backup_switch = Gtk.Switch()
 
 		# Only enable switch if user has registered a backup device
@@ -112,7 +157,7 @@ class UIWindow(Adw.PreferencesWindow):
 			# Disable switch
 			self.auto_backup_switch.set_sensitive(False)
 
-		# self.auto_backup_switch.set_tooltip_text('Coming soon...')
+		self.auto_backup_switch.set_tooltip_text('You will have to wait a few seconds before changing the checkbox state.')
 		self.auto_backup_switch.connect("notify::active", self.on_auto_backup_switch_toggled)
 
 		# Add the label to the switch box
@@ -132,7 +177,7 @@ class UIWindow(Adw.PreferencesWindow):
 		##########################################################################
 		# Folders Tab
 		folders_page = Adw.PreferencesPage()
-		# folders_page.set_icon_name("folder-open-symbolic")
+		folders_page.set_icon_name("folder-open-symbolic")
 		self.add(folders_page)
 
 		# Create the groups
@@ -158,13 +203,13 @@ class UIWindow(Adw.PreferencesWindow):
 			orientation=Gtk.Orientation.HORIZONTAL)
 
 		# Create a label for the switch
-		label = Gtk.Label(label="   Ignore hidden files and empty folders.")
+		label = Gtk.Label(label="   Ignore hidden files.")
 
 		# Create the switch
 		self.ignore_hidden_switch = Gtk.Switch()
 		self.ignore_hidden_switch.set_active(True)
-		self.ignore_hidden_switch.set_sensitive(False)
-		self.ignore_hidden_switch.connect("notify::active", self.on_auto_backup_switch_toggled)
+		# self.ignore_hidden_switch.set_sensitive(False)
+		self.ignore_hidden_switch.connect("notify::active", self.on_ignore_hidden_switch_toggled)
 
 		# Add the label to the switch box
 		hidden_switch_box.append(self.ignore_hidden_switch)
@@ -187,7 +232,11 @@ class UIWindow(Adw.PreferencesWindow):
 		# Display loaded exluded folders
 		for folder in self.ignored_folders:
 			self.add_folder_to_list(folder)
-	
+		
+		##########################################################################
+		# ABOUT PAGE
+		##########################################################################
+
 	def load_folders_from_config(self):
 		"""Loads folders from the config file."""
 		config = configparser.ConfigParser()
@@ -205,14 +254,22 @@ class UIWindow(Adw.PreferencesWindow):
 		#         config_file.write('[EXCLUDE_FOLDER]\nfolders=\n')
 
 	def on_ignore_hidden_switch_toggled(self, switch, gparam):
+		true_false: str = 'false'
+
 		# Handle the toggle state of the ignore hidden switch
 		if switch.get_active():
 			print("Ignoring hidden files and folders.")
-			# Add logic to handle ignoring hidden files/folders
+			true_false = 'true'
 		else:
 			print("Not ignoring hidden files and folders.")
-			# Add logic to revert this behavior
+			true_false = 'false'
 
+		# Update the conf file
+		server.set_database_value(
+			section='EXCLUDE',
+			option='exclude_hidden_itens',
+			value=true_false)
+		
 	def auto_select_backup_device(self):
 		# Get stored driver_location and driver_name
 		driver_location = server.get_database_value(
@@ -246,6 +303,17 @@ class UIWindow(Adw.PreferencesWindow):
 			self.auto_backup_switch.set_active(False)
 		
 		self.programmatic_change = False  # Reset the flag after programmatic change
+	
+	def auto_select_hidden_itens(self):
+		exclude_hidden_itens: bool = server.get_database_value(
+			section='EXCLUDE',
+			option='exclude_hidden_itens')
+
+		# Auto checkbox
+		if exclude_hidden_itens:
+			self.ignore_hidden_switch.set_active(True)
+		else:
+			self.ignore_hidden_switch.set_active(False)
 
 	def on_location_changed(self, combo_row, pspec):
 		# Handle location changes
@@ -255,10 +323,13 @@ class UIWindow(Adw.PreferencesWindow):
 		# Handle folder button click
 		print("Folder button clicked")
 		# Open a file chooser dialog if needed
-
+	
 	def on_auto_backup_switch_toggled(self, switch, pspec):
-		if self.programmatic_change:
-			return  # Exit the function if it's a programmatic change
+		if self.programmatic_change or self.switch_cooldown_active:
+			return  # Exit the function if it's a programmatic change or cooldown active
+
+		# Disable the switch immediately and start the cooldown
+		self.disable_switch_for_cooldown(switch)
 
 		# Handle system tray switch toggling
 		auto_backup_active = switch.get_active()
@@ -278,6 +349,47 @@ class UIWindow(Adw.PreferencesWindow):
 			section='BACKUP',
 			option='automatically_backup',
 			value=true_false)
+		
+	def disable_switch_for_cooldown(self, switch):
+		"""Disables the switch and re-enables it after the cooldown period."""
+		self.switch_cooldown_active = True
+		switch.set_sensitive(False)  # Disable the switch to prevent user interaction
+
+		def enable_switch_after_cooldown():
+			time.sleep(5)  # Cooldown delay
+			GLib.idle_add(self.enable_switch, switch)  # Re-enable in the main thread
+
+		# Start the cooldown in a new thread to avoid blocking the UI
+		threading.Thread(target=enable_switch_after_cooldown, daemon=True).start()
+	
+	def enable_switch(self, switch):
+		"""Re-enable the switch after the cooldown period."""
+		self.switch_cooldown_active = False
+		self.auto_backup_switch.set_sensitive(True)  # Re-enable the switch
+
+	#  TO DELETE
+	# def on_auto_backup_switch_toggled(self, switch, pspec):
+	# 	if self.programmatic_change:
+	# 		return  # Exit the function if it's a programmatic change
+
+	# 	# Handle system tray switch toggling
+	# 	auto_backup_active = switch.get_active()
+	# 	true_false: str = 'false'
+
+	# 	if auto_backup_active:
+	# 		if not server.is_daemon_running():
+	# 			self.start_daemon()  # Only start if not running
+	# 		true_false = 'true'
+	# 		self.create_autostart_entry()  # Create .desktop file for auto startup
+	# 	else:
+	# 		self.stop_daemon()  # Stop the daemon
+	# 		self.remove_autostart_entry()  # Optionally remove autostart entry
+
+	# 	# Update the conf file
+	# 	server.set_database_value(
+	# 		section='BACKUP',
+	# 		option='automatically_backup',
+	# 		value=true_false)
 
 	def create_autostart_entry(self):
 		autostart_dir = os.path.expanduser("~/.config/autostart/")
@@ -298,9 +410,9 @@ class UIWindow(Adw.PreferencesWindow):
 		logging.info("Autostart entry created.")
 
 	def remove_autostart_entry(self):
-		autostart_file = os.path.expanduser(f"~/.config/autostart/{server.APP_NAME.lower()}_autostart.desktop")
-		if os.path.exists(autostart_file):
-			os.remove(autostart_file)
+		# autostart_file = os.path.expanduser(f"~/.config/autostart/{server.APP_NAME.lower()}_autostart.desktop")
+		if os.path.exists(server.autostart_file):
+			os.remove(server.autostart_file)
 			logging.info("Autostart entry removed.")
 
 	def start_daemon(self):
@@ -382,15 +494,18 @@ class UIWindow(Adw.PreferencesWindow):
 			spacing=10)
 		
 		# Create a label for the folder
-		label = Gtk.Label(label=folder)
+		label = Gtk.Label(
+			label=f"  {folder}")
 		
 		# Create a remove button
-		remove_button = Gtk.Button(label="-")
+		remove_button = Gtk.Button(
+			label="-")
+		remove_button.set_tooltip_text("Remove folder")
 		remove_button.connect("clicked", self.on_remove_folder_clicked, row, folder)
 
 		# Add the label and the remove button to the box
-		box.append(label)
 		box.append(remove_button)
+		box.append(label)
 		
 		# Add the box to the ListBoxRow
 		row.set_child(box)
