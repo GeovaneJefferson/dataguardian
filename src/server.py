@@ -25,6 +25,7 @@ import gi
 import json
 import fnmatch
 import hashlib
+import stat
 
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -81,20 +82,19 @@ class SERVER:
 		################################################################################
 		# FLATPAK
 		################################################################################
-		self.GET_FLATPAKS_APPLICATIONS_NAME: str = 'flatpak list --app --columns=application'
+		# self.GET_FLATPAKS_APPLICATIONS_NAME: str = 'flatpak list --app --columns=application'
+		self.GET_FLATPAKS_APPLICATIONS_NAME = 'flatpak-spawn --host flatpak list --app --columns=application'
+		self.FLATPAK_SH_DST: str = f'~/.var/app/{self.ID}/config/list_flatpaks.sh'
 
 		################################################################################
 		# LOCATIONS
 		################################################################################
 		self.CONF = configparser.ConfigParser()
-		# self.CONF_LOCATION: str = 'src/database/config.conf'
 		self.CONF_LOCATION: str = os.path.join(Path.home(), '.var', 'app', self.ID, 'config', 'config.conf')
-		# Check if the config file exists and create it if it doesn't
-
 		self.autostart_file: str = os.path.expanduser(f"~/.config/autostart/{self.APP_NAME.lower()}_autostart.desktop")
 
 		if not os.path.exists(self.CONF_LOCATION):
-			self.create_default_config()
+			self.create_and_move_files_to_users_home()
 
 		if os.path.exists(self.CONF_LOCATION):
 			self.CONF.read(self.CONF_LOCATION)
@@ -133,7 +133,7 @@ class SERVER:
 		self.DAEMON_PY_LOCATION: str = os.path.join('/app/share/dataguardian/src', 'daemon.py')
 		self.DAEMON_PID_LOCATION: str = os.path.join(Path.home(), '.var', 'app', self.ID, 'config', 'daemon.pid')
 
-	def create_default_config(self):
+	def create_and_move_files_to_users_home(self):
 		# Create the directory if it doesn't exist
 		config_dir = os.path.dirname(self.CONF_LOCATION)
 		os.makedirs(config_dir, exist_ok=True)
@@ -150,9 +150,46 @@ class SERVER:
 			'driver_name': ''
 		}
 
+		self.CONF['EXCLUDE'] = {
+			'exclude_hidden_itens': 'true',
+		}
+
+		self.CONF['EXCLUDE_FOLDER'] = {
+			'folders': '',
+		}
+
+		self.CONF['RECENT'] = {
+			'recent_backup_file_path': '',
+		}
+
 		# Save the config to the file
 		with open(self.CONF_LOCATION, 'w') as config_file:
 			self.CONF.write(config_file)
+
+		# ######################################################################
+		# # Create the directory if it doesn't exist
+		# flatpak_list_dir = os.path.dirname(self.FLATPAK_SH_DST)
+		# os.makedirs(flatpak_list_dir, exist_ok=True)
+
+		# # Create the shell script content
+		# script_content = """#!/bin/bash\nflatpak list --app --columns=application
+		# """
+
+		# # Write the content to the file
+		# with open(os.path.expanduser(self.FLATPAK_SH_DST), 'w') as script_file:
+		# 	script_file.write(script_content)
+
+		# # Make the script executable
+		# try:
+		# 	os.chmod(self.FLATPAK_SH_DST, stat.S_IREAD)
+		# 	os.chmod(self.FLATPAK_SH_DST, stat.S_IROTH)
+		# 	os.chmod(self.FLATPAK_SH_DST, stat.S_IWRITE)
+
+		# 	print(f"Script created and made executable at: {self.FLATPAK_SH_DST}")
+		# except PermissionError as e:
+		# 	print(f"Permission error while changing file permissions: {e}")
+
+		# print(f"Script created at: {os.path.expanduser(self.FLATPAK_SH_DST)}")
 
 	def is_daemon_running(self):
 		"""Check if the daemon is already running by checking the PID in the Flatpak sandbox."""
@@ -366,13 +403,17 @@ class SERVER:
 	def create_base_folder(self) -> str:
 		return f"{self.DRIVER_LOCATION}/{self.APP_NAME_CLOSE_LOWER}"
 
-	def has_backup_dates_to_compare(self) -> list:   # Check for dates folders
+	def has_backup_dates_to_compare(self) -> list:
+		# Get all date folder names, parse them as dates, then sort from newest to oldest
 		return sorted(
 			[
-				date for date in os.listdir(self.backup_folder_name()) if '-' in date
+				date for date in os.listdir(self.backup_folder_name())
+				if '-' in date
 			],
-			reverse=True)  # Sort dates from newest to oldest
-		
+			key=lambda d: datetime.strptime(d, '%d-%m-%Y'),
+			reverse=True  # Sort dates from newest to oldest
+		)
+	
 	################################################################################
 	# FLATPAK
 	def flatpak_txt_location(self) -> str:

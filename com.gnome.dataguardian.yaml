@@ -15,6 +15,8 @@ finish-args:
   - --socket=session-bus  
   - --talk-name=org.freedesktop.Flatpak  # Added to allow communication with the host Flatpak service
   - --filesystem=xdg-run/flatpak  # Allow access to the flatpak-spawn socket
+  - --filesystem=xdg-run/gvfsd
+  
 modules:
   - name: dataguardian
     buildsystem: simple
@@ -48,7 +50,7 @@ modules:
 
       # Create the config directory in the app's runtime
       - mkdir -p /app/share/dataguardian/config
-
+      
       # Copy AppStream metadata to the correct location
       # - mkdir -p /app/share/metainfo
       # - cp -r com.gnome.dataguardian.metainfo.xml /app/share/metainfo/
@@ -65,5 +67,5 @@ modules:
     #     commit: 362dadf3d8582d82e44d1473d7a925473258e82ef3b8aa1fccc1f9ae0ff2e034
     #   - type: file
     #     path: com.gnome.dataguardian.metainfo.xml
-cleanup-commands:
-  - /app/bin/stop-daemon.sh
+# cleanup-commands:
+#   - /app/bin/stop-daemon.sh

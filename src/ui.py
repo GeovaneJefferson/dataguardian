@@ -97,9 +97,19 @@ class UIWindow(Adw.PreferencesWindow):
 
 		# Location (ComboBox for backup location)
 		self.location_row = Adw.ComboRow(
-			title="Location", 
+			title="Location:", 
 			selected=0)
-		self.location_row.set_model(Gtk.StringList.new(["Local Storage"]))
+		
+		self.location_row.set_model(Gtk.StringList.new([f"Local Storage"]))
+		
+		# # Only enable switch if user has registered a backup device
+		# driver_name = server.get_database_value(
+		# 	section='DRIVER',
+		# 	option='driver_name')
+		 
+		# if driver_name != '':
+		# 	self.location_row.set_model(Gtk.StringList.new([driver_name]))
+		
 		self.location_row.connect("notify::selected", self.on_location_changed)
 
 		# Folder button
@@ -117,7 +127,7 @@ class UIWindow(Adw.PreferencesWindow):
 
 		# Backup Device (Expandable Row)
 		self.backup_device_row = Adw.ExpanderRow(
-			title="Backup Device")
+			title="Choose a backup device:")
 		self.backup_device_list = Gtk.ComboBoxText()
 		self.backup_device_list.set_id_column(0)
 		self.backup_device_list.connect("changed", self.on_backup_device_selected)  # Connect the signal

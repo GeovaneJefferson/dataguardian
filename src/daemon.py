@@ -9,6 +9,48 @@ def hash_file(file_path: str) -> str:
 			hash_sha256.update(chunk)
 	return hash_sha256.hexdigest()
 
+# def backup_flatpaks_names():
+#     flatpak_location = server.flatpak_txt_location()
+#     flatpaks = set()
+#     script_path = os.path.expanduser(server.FLATPAK_SH_DST)
+
+#     try:
+#         # Ensure the directory for the output file exists
+#         os.makedirs(os.path.dirname(flatpak_location), exist_ok=True)
+
+#         # Execute the script directly
+#         flatpak_process = sub.Popen(
+#             [script_path],
+#             stdout=sub.PIPE,
+#             stderr=sub.PIPE
+#         )
+#         flatpak_output, flatpak_error = flatpak_process.communicate()
+
+#         # Handle errors in the script execution
+#         if flatpak_error:
+#             logging.error(f"Error executing Flatpak list script: {flatpak_error.decode().strip()}")
+#             return
+
+#         if not flatpak_output:
+#             logging.info("Flatpak command returned no output. No Flatpaks to backup.")
+#             return
+
+#         # Process and save the output
+#         with open(flatpak_location, 'w') as configfile:
+#             for flatpak in flatpak_output.decode().splitlines():
+#                 flatpak_name = flatpak.strip()
+#                 if flatpak_name:
+#                     flatpaks.add(flatpak_name)
+#                     configfile.write(flatpak_name + '\n')
+
+#         if flatpaks:
+#             logging.info(f"Flatpak installations backed up to: {flatpak_location}")
+
+#     except IOError as e:
+#         logging.error(f"Error backing up Flatpak installations: {e}")
+#     except Exception as e:
+#         logging.error(f"Unexpected error during Flatpak backup: {e}")
+
 def backup_flatpaks_names():
 	flatpak_location: str = server.flatpak_txt_location()
 	flatpaks: set = set()
@@ -46,7 +88,7 @@ def is_app_installed():
 	try:
 		# Run the Flatpak list command using flatpak-spawn
 		result = sub.run(
-			['flatpak-spawn', '--host', 'flatpak', 'list', '--app', '--columns=application'],
+			['flatpak', 'list', '--app', 'list', '--columns=application'],
 			stdout=sub.PIPE,
 			stderr=sub.PIPE,
 			text=True  # Capture output as text
@@ -73,12 +115,11 @@ class Daemon:
 		self.backup_in_progress: bool = False
 		self.is_backing_up_to_main: bool = False
 		self.suspend_flag = False  # Flag to handle suspension
-		self.loop = asyncio.get_event_loop()
 		self.main_backup_dir: str = server.main_backup_folder()
 		self.updates_backup_dir: str = server.backup_folder_name()
 
-		self.current_date = datetime.now().strftime('%d-%m-%Y')
-		self.current_time = datetime.now().strftime('%H-%M')
+		# self.current_date = datetime.now().strftime('%d-%m-%Y')
+		# self.current_time = datetime.now().strftime('%H-%M')
 
 	# TEST
 	##########################################################################
@@ -160,73 +201,88 @@ class Daemon:
 
 		return home_files
 
-	# async def get_filtered_home_files(self) -> tuple:
-	# 	"""
-	# 	Retrieve all files from the home directory while optionally excluding hidden items
-	# 	and folders specified in the EXCLUDE_FOLDER config.
-	# 	Returns a tuple containing the list of files and the total count of files.
-	# 	"""
-	# 	home_files = []
-	# 	# Define a list of directories to exclude
-	# 	excluded_dirs = ['__pycache__', 'crdownload']
-	# 	# Load ignored folders from config
-	# 	ignored_folders = self.load_ignored_folders_from_config()
+	# def file_was_updated(self, file_path: str, rel_path: str) -> bool:
+	# 	"""Check if the file was updated by comparing its size and content hash (if sizes match)."""
+		
+	# 	try:
+	# 		current_file_size = os.path.getsize(file_path)
+	# 	except FileNotFoundError:
+	# 		return False
 
-	# 	for root, dirs, files in os.walk(server.USER_HOME):
-	# 		# Check for suspention
-	# 		if self.suspend_flag:
-	# 			self.signal_handler(signal.SIGTERM, None)  
+	# 	# Get list of backup dates, sorted newest to oldest
+	# 	backup_dates = sorted(
+	# 		server.has_backup_dates_to_compare(), 
+	# 		key=lambda d: datetime.strptime(d, '%d-%m-%Y'), 
+	# 		reverse=True
+	# 	)
+		
+	# 	seen_paths = set()  # Track paths to avoid duplicates
+		
+	# 	for date_folder in backup_dates:
+	# 		date_folder_path = os.path.join(server.backup_folder_name(), date_folder)
 
-	# 		# Exclude directories that match the ignored folders
-	# 		if any(os.path.commonpath([root, ignored_folder]) == ignored_folder for ignored_folder in ignored_folders):
-	# 			continue
+	# 		if os.path.isdir(date_folder_path):
+	# 			time_folders = sorted(
+	# 				(tf for tf in os.listdir(date_folder_path) if os.path.isdir(os.path.join(date_folder_path, tf))),
+	# 				key=lambda tf: datetime.strptime(f"{date_folder} {tf}", '%d-%m-%Y %H-%M'),
+	# 				reverse=True
+	# 			)
 
-	# 		for file in files:
-	# 			try:
-	# 				src_path = os.path.join(root, file)
-	# 				rel_path = os.path.relpath(src_path, server.USER_HOME)
-	# 				size = os.path.getsize(src_path)
+	# 			for time_folder in time_folders:
+	# 				time_folder_path = os.path.join(date_folder_path, time_folder)
 
-	# 				# Exclude hidden files and excluded directories if specified
-	# 				is_hidden_file = server.EXCLUDE_HIDDEN_ITENS and (
-	# 					file.startswith('.') or any(excluded_dir in rel_path.split(os.sep) for excluded_dir in excluded_dirs)
-	# 				)
-
-	# 				# Exclude hidden files if specified
-	# 				if server.EXCLUDE_HIDDEN_ITENS and (file.startswith('.') or any(part.startswith('.') or part.startswith('__pycache__') for part in rel_path.split(os.sep))):
+	# 				# Skip if path has been processed
+	# 				if time_folder_path in seen_paths:
 	# 					continue
+	# 				seen_paths.add(time_folder_path)
 
-	# 				home_files.append((src_path, rel_path, size))
-	# 			except Exception as e:
-	# 				continue
+	# 				updated_file_path = os.path.join(time_folder_path, rel_path)
+	# 				# asldasdDASDasdasdsadasdsa
+					
+	# 				# print(f"Checking backup file in: {time_folder_path}")
 
-	# 	return home_files
+	# 				if os.path.exists(updated_file_path):
+	# 					if self.compare_files(current_file_size, file_path, updated_file_path):
+	# 						return True
+	# 					else:
+	# 						return False
+
+	# 	main_file_path = os.path.join(server.main_backup_folder(), rel_path)
+	# 	if os.path.exists(main_file_path):
+	# 		return self.compare_files(current_file_size, file_path, main_file_path)
+
+	# 	return False
+
+	# def compare_files(self, current_size, current_path, backup_path):
+	# 	backup_size = os.path.getsize(backup_path)
+	# 	if backup_size != current_size:
+	# 		return True
+	# 	return hash_file(current_path) != hash_file(backup_path)
 
 	def file_was_updated(self, file_path: str, rel_path: str) -> bool:
 		"""Check if the file was updated by comparing its size and content hash (if sizes match)."""
 
 		# Get the modification time and size of the current file
-		# file_mod_time = os.path.getmtime(file_path)
 		try:
 			current_file_size = os.path.getsize(file_path)
 		except FileNotFoundError:
 			return False
 
-		# logging.info(f"Checking file: {file_path}")
-		# logging.info(f"Current file modification time: {file_mod_time}")
-		# logging.info(f"Current file size: {current_file_size}")
-
 		# Get the list of backup dates to compare
 		backup_dates: list = server.has_backup_dates_to_compare()
-
+		
 		if backup_dates:
 			# Iterate over the sorted date folders (newest to oldest)
 			for date_folder in backup_dates:
 				date_folder_path = os.path.join(server.backup_folder_name(), date_folder)
 
 				if os.path.isdir(date_folder_path):
-					# Sort and iterate over the time subfolders within the date folder (latest to oldest)
-					time_folders = sorted(os.listdir(date_folder_path), reverse=True)
+					# Sorting time folders by actual time from latest to earliest
+					time_folders = sorted(
+						[time_folder for time_folder in os.listdir(date_folder_path) if '-' in time_folder],
+						key=lambda t: datetime.strptime(t, '%H-%M'),
+						reverse=True
+					)
 
 					for time_folder in time_folders:
 						time_folder_path = os.path.join(date_folder_path, time_folder)
@@ -236,12 +292,8 @@ class Daemon:
 
 							# If the backup file exists, compare the sizes and hashes if necessary
 							if os.path.exists(updated_file_path):
-								updated_mod_time = os.path.getmtime(updated_file_path)
 								updated_file_size = os.path.getsize(updated_file_path)
-
-								# logging.info(f"Backup file modification time: {updated_mod_time}")
-								# logging.info(f"Backup file size: {updated_file_size}")
-
+				
 								# Compare file sizes first
 								if updated_file_size != current_file_size:
 									# logging.info(f"File sizes are different. Backup needed for: {file_path}")
@@ -251,44 +303,26 @@ class Daemon:
 									current_file_hash = hash_file(file_path)
 									updated_file_hash = hash_file(updated_file_path)
 
-									# logging.info(f"Current file hash: {current_file_hash}")
-									# logging.info(f"Backup file hash: {updated_file_hash}")
-
 									if updated_file_hash != current_file_hash:
-										# logging.info(f"File hashes are different. Backup needed for: {file_path}")
 										return True
-									else:
-										# logging.info(f"No backup needed for: {file_path}")
-										return False
+									return False
 
 		# Fallback to .main_backup folder if no matching date-based backup was found
 		main_file_path = os.path.join(server.main_backup_folder(), rel_path)
-		# logging.info(f"Comparing with .main_backup: {main_file_path}")
 
 		if os.path.exists(main_file_path):
-			# main_mod_time = os.path.getmtime(main_file_path)
 			main_file_size = os.path.getsize(main_file_path)
-
-			# logging.info(f".main_backup file modification time: {main_mod_time}")
-			# logging.info(f".main_backup file size: {main_file_size}")
 
 			# Compare file sizes first
 			if main_file_size != current_file_size:
-				# logging.info(f"File sizes are different. Backup needed (main backup) for: {file_path}")
 				return True
 			else:
 				# If sizes are the same, compare the file hashes
 				current_file_hash = hash_file(file_path)
 				main_file_hash = hash_file(main_file_path)
 
-				# logging.info(f"Current file hash: {current_file_hash}")
-				# logging.info(f".main_backup file hash: {main_file_hash}")
-
 				if main_file_hash != current_file_hash:
-					# logging.info(f"File hashes are different. Backup needed (main backup) for: {file_path}")
 					return True
-
-		# logging.info(f"No backup needed for: {file_path}")
 		return False
 	
 	async def make_first_backup(self):
@@ -308,6 +342,9 @@ class Daemon:
 				continue
 
 			await self.backup_file(file=path, new_file=True)
+			
+		# Backup flatpak 
+		backup_flatpaks_names()
 
 		logging.info("Successfully made the first backup.")
 
@@ -347,10 +384,10 @@ class Daemon:
 					logging.info(f"Successfully backed up: {file} to {backup_file_path}")
 					break
 				except FileNotFoundError as r:
-					continue
+					break
 				except Exception as e:
 					logging.error(f"Error backing up: {file}: {e}")
-					pass
+					break
 
 			except OSError as e:
 				if "No space left" in str(e) or "Not enough space" in str(e):
@@ -538,13 +575,7 @@ class Daemon:
 			self.save_backup(backup_status)  # Save current state to JSON
 
 		logging.info("System is going to sleep, shut down, restart, PID file do not exist or just terminated. Stopping backup.")
-		try:
-			self.loop.stop()
-		except:
-			pass
-
 		exit()
-		# sys.exit(0)
 
 
 if __name__ == "__main__":
