@@ -1,5 +1,5 @@
-from has_driver_connection import has_driver_connection
 from server import *
+from has_driver_connection import has_driver_connection
 
 def hash_file(file_path: str) -> str:
 	"""Generate the SHA-256 hash of a file."""
@@ -8,48 +8,6 @@ def hash_file(file_path: str) -> str:
 		for chunk in iter(lambda: f.read(4096), b""):
 			hash_sha256.update(chunk)
 	return hash_sha256.hexdigest()
-
-# def backup_flatpaks_names():
-#     flatpak_location = server.flatpak_txt_location()
-#     flatpaks = set()
-#     script_path = os.path.expanduser(server.FLATPAK_SH_DST)
-
-#     try:
-#         # Ensure the directory for the output file exists
-#         os.makedirs(os.path.dirname(flatpak_location), exist_ok=True)
-
-#         # Execute the script directly
-#         flatpak_process = sub.Popen(
-#             [script_path],
-#             stdout=sub.PIPE,
-#             stderr=sub.PIPE
-#         )
-#         flatpak_output, flatpak_error = flatpak_process.communicate()
-
-#         # Handle errors in the script execution
-#         if flatpak_error:
-#             logging.error(f"Error executing Flatpak list script: {flatpak_error.decode().strip()}")
-#             return
-
-#         if not flatpak_output:
-#             logging.info("Flatpak command returned no output. No Flatpaks to backup.")
-#             return
-
-#         # Process and save the output
-#         with open(flatpak_location, 'w') as configfile:
-#             for flatpak in flatpak_output.decode().splitlines():
-#                 flatpak_name = flatpak.strip()
-#                 if flatpak_name:
-#                     flatpaks.add(flatpak_name)
-#                     configfile.write(flatpak_name + '\n')
-
-#         if flatpaks:
-#             logging.info(f"Flatpak installations backed up to: {flatpak_location}")
-
-#     except IOError as e:
-#         logging.error(f"Error backing up Flatpak installations: {e}")
-#     except Exception as e:
-#         logging.error(f"Unexpected error during Flatpak backup: {e}")
 
 def backup_flatpaks_names():
 	flatpak_location: str = server.flatpak_txt_location()
@@ -113,17 +71,11 @@ class Daemon:
 		self.copied_files: int = 0
 		self.start_time = time.time()
 		self.backup_in_progress: bool = False
-		self.is_backing_up_to_main: bool = False
+		self.is_backing_up_to_main: bool = None
 		self.suspend_flag = False  # Flag to handle suspension
 		self.main_backup_dir: str = server.main_backup_folder()
 		self.updates_backup_dir: str = server.backup_folder_name()
 
-		# self.current_date = datetime.now().strftime('%d-%m-%Y')
-		# self.current_time = datetime.now().strftime('%H-%M')
-
-	# TEST
-	##########################################################################
-	# EXCLUDE FOLDERS
 	def load_ignored_folders_from_config(self):
 		"""
 		Load ignored folders from the configuration file.
@@ -155,7 +107,6 @@ class Daemon:
 
 		# Load ignored folders from config
 		ignored_folders = self.load_ignored_folders_from_config()
-		
 		exclude_hidden_itens: bool = server.get_database_value(
 			section='EXCLUDE',
 			option='exclude_hidden_itens')
@@ -175,15 +126,9 @@ class Daemon:
 					rel_path = os.path.relpath(src_path, server.USER_HOME)
 					size = os.path.getsize(src_path)
 
-					# # Exclude hidden files, files in excluded directories, and unfinished files by extension
-					# is_hidden_file = server.EXCLUDE_HIDDEN_ITENS and (
-					# 	file.startswith('.') or
-					# 	any(part.startswith('.') or part in excluded_dirs for part in rel_path.split(os.sep))
-					# )
-					
 					# Exclude hidden files if the option is enabled
 					if exclude_hidden_itens:  
-						is_hidden_file = (
+						is_hidden_file: bool = (
 							file.startswith('.') or
 							any(part.startswith('.') or part in excluded_dirs for part in rel_path.split(os.sep)))
 					else:
@@ -200,64 +145,6 @@ class Daemon:
 					continue
 
 		return home_files
-
-	# def file_was_updated(self, file_path: str, rel_path: str) -> bool:
-	# 	"""Check if the file was updated by comparing its size and content hash (if sizes match)."""
-		
-	# 	try:
-	# 		current_file_size = os.path.getsize(file_path)
-	# 	except FileNotFoundError:
-	# 		return False
-
-	# 	# Get list of backup dates, sorted newest to oldest
-	# 	backup_dates = sorted(
-	# 		server.has_backup_dates_to_compare(), 
-	# 		key=lambda d: datetime.strptime(d, '%d-%m-%Y'), 
-	# 		reverse=True
-	# 	)
-		
-	# 	seen_paths = set()  # Track paths to avoid duplicates
-		
-	# 	for date_folder in backup_dates:
-	# 		date_folder_path = os.path.join(server.backup_folder_name(), date_folder)
-
-	# 		if os.path.isdir(date_folder_path):
-	# 			time_folders = sorted(
-	# 				(tf for tf in os.listdir(date_folder_path) if os.path.isdir(os.path.join(date_folder_path, tf))),
-	# 				key=lambda tf: datetime.strptime(f"{date_folder} {tf}", '%d-%m-%Y %H-%M'),
-	# 				reverse=True
-	# 			)
-
-	# 			for time_folder in time_folders:
-	# 				time_folder_path = os.path.join(date_folder_path, time_folder)
-
-	# 				# Skip if path has been processed
-	# 				if time_folder_path in seen_paths:
-	# 					continue
-	# 				seen_paths.add(time_folder_path)
-
-	# 				updated_file_path = os.path.join(time_folder_path, rel_path)
-	# 				# asldasdDASDasdasdsadasdsa
-					
-	# 				# print(f"Checking backup file in: {time_folder_path}")
-
-	# 				if os.path.exists(updated_file_path):
-	# 					if self.compare_files(current_file_size, file_path, updated_file_path):
-	# 						return True
-	# 					else:
-	# 						return False
-
-	# 	main_file_path = os.path.join(server.main_backup_folder(), rel_path)
-	# 	if os.path.exists(main_file_path):
-	# 		return self.compare_files(current_file_size, file_path, main_file_path)
-
-	# 	return False
-
-	# def compare_files(self, current_size, current_path, backup_path):
-	# 	backup_size = os.path.getsize(backup_path)
-	# 	if backup_size != current_size:
-	# 		return True
-	# 	return hash_file(current_path) != hash_file(backup_path)
 
 	def file_was_updated(self, file_path: str, rel_path: str) -> bool:
 		"""Check if the file was updated by comparing its size and content hash (if sizes match)."""
@@ -325,14 +212,14 @@ class Daemon:
 					return True
 		return False
 	
-	async def make_first_backup(self):
+	async def _make_first_backup(self):
 		# Before starting the backup, set the flag
 		self.is_backing_up_to_main = True
 		filtered_home: tuple = await self.get_filtered_home_files()
 
 		for path, rel_path, size in filtered_home:
 			# Check if PID file do not exist
-			if not os.path.exists(server.DAEMON_PID_LOCATION):
+			if not os.path.exists(server.DAEMON_PID_LOCATION) or not has_driver_connection():
 				self.signal_handler(signal.SIGTERM, None)
 				return
 
@@ -341,6 +228,7 @@ class Daemon:
 			if os.path.exists(dest_path):
 				continue
 
+			# Attempt the backup
 			await self.backup_file(file=path, new_file=True)
 			
 		# Backup flatpak 
@@ -363,7 +251,7 @@ class Daemon:
 
 	async def backup_file(self, file: str, new_file: bool=False):
 		self.backup_in_progress = True
-		attempt_count = 0  # Track the number of backup attempts
+		attempt_count: int = 0  # Track the number of backup attempts
 
 		while True:
 			try: 
@@ -382,12 +270,12 @@ class Daemon:
 				try:
 					shutil.copy2(file, backup_file_path)
 					logging.info(f"Successfully backed up: {file} to {backup_file_path}")
-					break
+					self.backup_in_progress = False
+					return
 				except FileNotFoundError as r:
-					break
+					pass
 				except Exception as e:
-					logging.error(f"Error backing up: {file}: {e}")
-					break
+					pass
 
 			except OSError as e:
 				if "No space left" in str(e) or "Not enough space" in str(e):
@@ -398,11 +286,9 @@ class Daemon:
 
 					if len(backup_dates) <= 1:
 						logging.error(f"Not enough backup folders to delete. Current folder count: {len(backup_dates)}. Aborting backup.")
-						break  # Abort if there's only one backup left
 
 					if attempt_count >= 5:  # Avoid infinite loop after several retries
 						logging.error(f"Reached maximum attempts for {file}. Aborting backup.")
-						break
 
 					# Delete the oldest backup folder and retry
 					try:
@@ -410,21 +296,11 @@ class Daemon:
 						attempt_count += 1
 					except OSError as delete_error:
 						logging.error(f"Failed to delete the oldest backup folder: {delete_error}")
-						break
-				else:
-					logging.error(f"OS error backing up file {file}: {e}")
-					break
-			
-		# # TOFIX
-		# # Check if app still installed
-		# if not is_app_installed():
-		# 	# Disable real time protection
-		# 	# Call the signal handler to stop the daemon
-		# 	self.signal_handler(signal.SIGTERM, None)  
-
-		self.backup_in_progress = False
+				return
 
 	def save_backup(self, process=None):
+		logging.info("Saving settings...")
+
 		if process == '.main_backup':
 			# Create the interrupted file if it doesn't exist
 			if not os.path.exists(server.INTERRUPTED_MAIN):
@@ -444,7 +320,7 @@ class Daemon:
 
 			for path, rel_path, size in filtered_home:
 				# Check if PID file do not exist
-				if not os.path.exists(server.DAEMON_PID_LOCATION):
+				if not os.path.exists(server.DAEMON_PID_LOCATION) or not has_driver_connection():
 					self.signal_handler(signal.SIGTERM, None)
 					return
 
@@ -464,23 +340,11 @@ class Daemon:
 			if os.path.exists(server.INTERRUPTED_MAIN):
 				os.remove(server.INTERRUPTED_MAIN)
 
-		# else:
-		# 	logging.info("Starting fresh backup to .main_backup.")
-
-		# 	# Check for base folders before continues
-		# 	if server.has_backup_device_enough_space(
-		# 		file_path=None,
-		# 		backup_list=self.get_filtered_home_files()):
-		# 		# backup_list=server.get_filtered_home_files()):
-
-		# 		await self.make_first_backup()
-	
 	async def process_backups(self):
 		tasks: list = []
 
 		try:
 			filtered_home: tuple = await self.get_filtered_home_files()
-			# filtered_home: tuple = await server.get_filtered_home_files()
 
 			# Have to check the file 
 			for file_path, rel_path, size in filtered_home:
@@ -517,17 +381,6 @@ class Daemon:
 			await self.load_backup()
 
 			while True:
-				# BUG
-				'''
-				Because is a flatpak, can not use '	['flatpak-spawn', '--host', 'flatpak', 'list', '--app', '--columns=application'],
-				is a sandbox. Maybe, create a simple script, and send to /home/$USER/.var/app/com.gnome.dataguardian/config/, then call from there.
-				'''
-				# # Check if app still installed
-				# if not is_app_installed():
-				# 	logging.error(f"Error checking if app is installed: Closing daemon...")
-				# 	# Call the signal handler to stop the daemon
-				# 	self.signal_handler(signal.SIGTERM, None)  
-				
 				# Check if PID file do not exist
 				if not os.path.exists(server.DAEMON_PID_LOCATION):
 					logging.error("PID file missing. Daemon requires exit.")
@@ -541,14 +394,21 @@ class Daemon:
 
 					# Make first backup if it's the first time and no backups have been made yet
 					if not checked_for_first_backup and server.is_first_backup():
-						await self.make_first_backup()
+						await self._make_first_backup()  # Loop
 						checked_for_first_backup = True
 
 					# Process ongoing backups
 					await self.process_backups()
 
 				else:
+					self.backup_in_progress = False
+
 					if connection_logged:
+						print(self.is_backing_up_to_main)
+
+						if self.is_backing_up_to_main:
+							self.save_backup('.main_backup') 
+
 						logging.info("Waiting for connection to backup device...")
 						connection_logged = False  # Reset status to log when connection is re-established
 
@@ -593,3 +453,10 @@ if __name__ == "__main__":
 	logging.info("Starting file monitoring...")
 
 	asyncio.run(daemon.run_backup_cycle())
+
+
+# BUG
+'''
+Because is a flatpak, can not use '	['flatpak-spawn', '--host', 'flatpak', 'list', '--app', '--columns=application'],
+is a sandbox. Maybe, create a simple script, and send to /home/$USER/.var/app/com.gnome.dataguardian/config/, then call from there.
+'''

@@ -1,8 +1,10 @@
 from server import *
 
+server = SERVER()
+
 def device_location():
-    media_path = f'{SERVER().MEDIA}/{SERVER().USERNAME}'
-    run_path = f'{SERVER().RUN}/{SERVER().USERNAME}'
+    media_path = f'{server.MEDIA}/{server.USERNAME}'
+    run_path = f'{server.RUN}/{server.USERNAME}'
 
     try:
         # Check for devices in MEDIA

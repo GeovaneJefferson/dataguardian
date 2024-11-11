@@ -122,8 +122,8 @@ class SERVER:
 		# self.LOG_LOCATION: str = os.path.join(self.create_base_folder(), f'{self.APP_NAME_CLOSE_LOWER}.log')
 		self.LOG_LOCATION: str = os.path.join(Path.home(), '.var', 'app', self.ID, 'config', f'{self.APP_NAME_CLOSE_LOWER}.log')
 		# self.REMAINING_FILES_LOCATION: str = os.path.join(self.create_base_folder(), 'remaining_files.json')
-		self.INTERRUPTED_MAIN: str = os.path.join(self.create_base_folder(), '.interrupted_main')
-		self.INTERRUPTED_UPDATE: str = os.path.join(self.create_base_folder(), '.interrupted_update')
+		self.INTERRUPTED_MAIN: str = os.path.join(Path.home(), '.var', 'app', self.ID, 'config', '.interrupted_main')
+		self.INTERRUPTED_UPDATE: str = os.path.join(Path.home(), '.var', 'app', self.ID, 'config', '.interrupted_update')
 
 		# DAEMON PID
 		# self.DAEMON_PY_LOCATION: str = 'src/daemon.py'
@@ -493,28 +493,34 @@ class SERVER:
 	def get_database_value(self, section: str, option: str) -> str:
 		try:
 			# Check if config file exists and is loaded
-			if os.path.exists(self.CONF_LOCATION):
-				if self.CONF.has_section(section):
-					if self.CONF.has_option(section, option):
-						value = self.CONF.get(section, option)
-						return self.convert_result_to_python_type(value=value)
-					else:
-						raise ValueError(f"Option '{option}' not found in section '{section}'")
-				else:
-					raise ValueError(f"Section '{section}' not found")
-			else:
+			if not os.path.exists(self.CONF_LOCATION):
 				raise FileNotFoundError(f"Config file '{self.CONF_LOCATION}' does not exist")
+
+			if not self.CONF.has_section(section):
+				print(f"Section '{section}' not found in configuration.")
+				return None  # Or return a default value if needed
+
+			if not self.CONF.has_option(section, option):
+				print(f"Option '{option}' not found in section '{section}'.")
+				return None  # Or return a default value if needed
+
+			# Retrieve and convert the value
+			value = self.CONF.get(section, option)
+			return self.convert_result_to_python_type(value=value)
 
 		except BrokenPipeError:
 			# Handle broken pipe without crashing
 			print("Broken pipe occurred, but the app continues running.")
+			return None
+
 		except FileNotFoundError as e:
 			print(f"No connection to config file: {e}")
-			exit()
+			return None
+
 		except Exception as e:
 			current_function_name = inspect.currentframe().f_code.co_name
 			print(f"Error in function {current_function_name}: {e}")
-			exit()
+			return None
 
 	def set_database_value(self, section: str, option: str, value: str):
 		try:
