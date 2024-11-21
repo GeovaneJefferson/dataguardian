@@ -18,3 +18,5 @@
 - **Restore**: ⬛⬛⬛⬛⬜⬜⬜⬜⬜⬜ (40% complete)  
 - **Version Management**: ⬛⬛⬛⬛⬛⬛⬛⬛⬜⬜ (80% complete)  
 - **UI Enhancements**: ⬛⬛⬛⬛⬛⬛⬛⬜⬜⬜ (70% complete)
+- **Restore Files UI**: ⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ (0% complete)
+- **Migration Assistant**: ⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ (0% complete)
