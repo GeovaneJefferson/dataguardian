@@ -404,8 +404,6 @@ class Daemon:
 					self.backup_in_progress = False
 
 					if connection_logged:
-						print(self.is_backing_up_to_main)
-
 						if self.is_backing_up_to_main:
 							self.save_backup('.main_backup') 
 
