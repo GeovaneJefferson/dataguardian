@@ -20,3 +20,6 @@
 - **UI Enhancements**: ⬛⬛⬛⬛⬛⬛⬛⬜⬜⬜ (70% complete)
 - **Restore Files UI**: ⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ (0% complete)
 - **Migration Assistant**: ⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ (0% complete)
+
+## **Installation**
+$ flatpak-builder --force-clean --user --install repo com.gnome.dataguardian.yaml 
