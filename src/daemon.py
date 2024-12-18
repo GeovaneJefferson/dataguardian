@@ -510,7 +510,8 @@ class Daemon:
 						tasks.append(self.backup_file(file_path, new_file=False))
 
 				except Exception as file_error:
-					logging.error(f"Error processing file {file_path}: {file_error}")
+					pass
+					# logging.error(f"Error processing file {file_path}: {file_error}")
 
 			# Execute all backup tasks
 			if tasks:
