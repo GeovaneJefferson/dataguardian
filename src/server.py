@@ -9,6 +9,7 @@ import sys
 import signal
 import asyncio
 import threading
+from threading import Timer
 import multiprocessing
 import locale
 import sqlite3
@@ -34,7 +35,7 @@ from concurrent.futures import ThreadPoolExecutor
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 gi.require_version('Gio', '2.0')
-from gi.repository import Gtk, Adw, Gio
+from gi.repository import Gtk, Adw, Gio, GdkPixbuf
 
 
 # Ignore SIGPIPE signal, so that the app doesn't crash
@@ -46,6 +47,27 @@ class SERVER:
 		self.failed_backup: list = []
 		# Format the current date and time to get the day name
 		self.DAY_NAME: str = datetime.now().strftime("%A").upper().strip()  # SUNDAY, MONDAY...
+
+		# List of file extensions that can be used for generating thumbnails or previews
+		self.thumbnails_extensions_list = [
+			".png",  # PNG image files
+			".jpg",  # JPEG image files
+			".jpeg", # JPEG image files
+			".gif",  # GIF image files
+			".bmp",  # Bitmap image files
+			".webp", # WebP image files
+			".tiff", # TIFF image files
+			".svg",  # SVG image files (note: may require additional handling)
+			".ico",  # Icon files
+			".mp4",  # Video files (previews)
+			".avi",  # AVI video files
+			".mov",  # MOV video files
+			".pdf",  # PDF documents (may require special handling like Poppler to render)
+			".docx", # Word documents (requires a library to render previews)
+			".txt",  # Text files
+			".xlsx", # Excel files (requires libraries like OpenPyXL to render)
+			".pptx", # PowerPoint files (requires libraries like python-pptx to render)
+		]
 
 		################################################################################
 		# APP SETTINGS

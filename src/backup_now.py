@@ -654,7 +654,7 @@ from has_driver_connection import has_driver_connection
 
 def signal_handler(signum, frame):
     # Save the state when receiving a sleep signal
-    server.save_cache()
+    #server.save_cache()
     print("Backup process paused...")
 
 def has_base_backup_folder() -> bool:
