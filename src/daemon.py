@@ -250,6 +250,9 @@ class Daemon:
 			# Attempt the backup
 			await self.backup_file(file=path, new_file=True)
 			
+		# Update recent backup information
+		server.update_recent_backup_information()
+
 		# Backup flatpak 
 		backup_flatpaks_names()
 
@@ -377,57 +380,6 @@ class Daemon:
 		logging.error(error_msg)
 		return error_msg
 
-	# async def backup_file(self, file: str, new_file: bool=False):
-	# 	self.backup_in_progress = True
-	# 	attempt_count = 0  # Track the number of backup attempts
-
-	# 	while True:
-	# 		try: 
-	# 			if new_file:
-	# 				# Backup to .main_backup if it's a new file
-	# 				backup_file_path = self.get_backup_file_path(file)
-	# 				os.makedirs(os.path.dirname(backup_file_path), exist_ok=True)
-	# 				# logging.info(f"File backed up: {file} to {backup_file_path}")
-	# 			else:
-	# 				# Create the folder for the current date and time for updated files
-	# 				date_folder = datetime.now().strftime("%d-%m-%Y/%H-%M")
-	# 				backup_file_path = self.get_backup_file_path(file, date_folder)
-	# 				os.makedirs(os.path.dirname(backup_file_path), exist_ok=True)
-	# 				# logging.info(f"File backed up (update): {file} to {backup_file_path}")
-				
-	# 			try:
-	# 				print('Backing up:', file, backup_file_path)
-	# 				shutil.copy2(file, backup_file_path)
-	# 				logging.info(f"Successfully backed up: {file} to {backup_file_path}")
-	# 				return
-	# 			except FileNotFoundError as r:
-	# 				print('FileNotFoundError:', r)
-	# 				return
-	# 			except Exception as e:
-	# 				print('FileNotFoundError:', e)
-	# 				# logging.error(f"Error backing up: {file}: {e}")
-	# 				return
-	# 		except OSError as e:
-	# 			if "No space left" in str(e) or "Not enough space" in str(e):
-	# 				logging.warning(f"Not enough space to back up {file}. Attempt {attempt_count + 1}. Trying to delete the oldest backup folder...")
-
-	# 				# Check how many backup folders are available
-	# 				backup_dates: list = server.has_backup_dates_to_compare()
-
-	# 				if len(backup_dates) <= 1:
-	# 					logging.error(f"Not enough backup folders to delete. Current folder count: {len(backup_dates)}. Aborting backup.")
-
-	# 				if attempt_count >= 5:  # Avoid infinite loop after several retries
-	# 					logging.error(f"Reached maximum attempts for {file}. Aborting backup.")
-
-	# 				# Delete the oldest backup folder and retry
-	# 				try:
-	# 					await server.delete_oldest_backup_folder()
-	# 					attempt_count += 1
-	# 				except OSError as delete_error:
-	# 					logging.error(f"Failed to delete the oldest backup folder: {delete_error}")
-	# 			return
-
 	def save_backup(self, process=None):
 		logging.info("Saving settings...")
 
@@ -505,10 +457,16 @@ class Daemon:
 					if not os.path.exists(modded_main_file_path):
 						print('New file:', file_path)
 						tasks.append(self.backup_file(file_path, new_file=True))
+				
+						# Update recent backup information
+						server.update_recent_backup_information()
+
 					elif self.file_was_updated(file_path, rel_path):
 						print('Updated file:', file_path)
 						tasks.append(self.backup_file(file_path, new_file=False))
-
+				
+						# Update recent backup information
+						server.update_recent_backup_information()
 				except Exception as file_error:
 					pass
 					# logging.error(f"Error processing file {file_path}: {file_error}")
@@ -531,39 +489,6 @@ class Daemon:
 		except Exception as e:
 			logging.error(f"Unexpected error in process_backups: {e}")
 
-	# async def process_backups(self):
-	# 	tasks: list = []
-
-	# 	try:
-	# 		filtered_home: tuple = await self.get_filtered_home_files()
-	# 		# filtered_home: tuple = await server.get_filtered_home_files()
-
-	# 		# Have to check the file 
-	# 		for file_path, rel_path, size in filtered_home:
-	# 			modded_main_file_path = os.path.join(
-	# 				self.main_backup_dir, os.path.relpath(file_path, server.USER_HOME))
-				
-	# 			# Check if PID file do not exist
-	# 			if not os.path.exists(server.DAEMON_PID_LOCATION):
-	# 				self.signal_handler(signal.SIGTERM, None)
-	# 				return
-				
-	# 			# Check for new files
-	# 			if not os.path.exists(modded_main_file_path):
-	# 				tasks.append(self.backup_file(file_path, new_file=True))
-	# 			# Check from latest to oldest date/time dir
-	# 			elif self.file_was_updated(file_path, rel_path):
-	# 				# Fx. /media/macbkook/dataguardian/.main_backup/20-10-2024/10-10/
-	# 				tasks.append(self.backup_file(file_path, new_file=False))
-			
-	# 		if tasks:
-	# 			backup_flatpaks_names()
-
-	# 		await asyncio.gather(*tasks)
-
-	# 	except ValueError as e:
-	# 		logging.error(f"ValueError: {e}")
-			
 	async def run_backup_cycle(self):
 		checked_for_first_backup: bool = False
 		connection_logged: bool = False  # Track if connection status has already been logged

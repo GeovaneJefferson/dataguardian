@@ -19,7 +19,7 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
 		# Create a Preferences Window with tabs
         self.set_title("Settings")
         self.set_size_request(WIDTH, HEIGHT)
-        self.set_resizable(False)  # Prevent window from being resized
+        self.set_resizable(True)  # Prevent window from being resized
 		
         ##########################################################################
 		# VARIABLES
@@ -55,9 +55,20 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
         self.load_folders_from_config()
         self.display_excluded_folders()  
 
+
 ##########################################################################
 # UI
 ##########################################################################
+    def update_ui_information(self):
+        recent_backup_informations = server.get_database_value(
+			section='RECENT',
+			option='recent_backup_timeframe')
+        
+        if recent_backup_informations:
+            self.recent_backup_label.set_text(recent_backup_informations)
+        else:
+            self.recent_backup_label.set_text('Never')
+
     def on_backup_device_selected(self, dropdown, gparam):
         """Handle the change in backup device selection."""
         selected_device = dropdown.get_selected_item()
@@ -80,7 +91,7 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
             server.set_database_value(
                 section='DRIVER',
                 option='driver_name',
-                value=str(selected_device)
+                value=str(selected_device_name)
             )
 
             # Enable switch
@@ -190,8 +201,8 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
 
         # Add "Most Recent Backup" row
         recent_backup_row = Adw.ActionRow(title="Most Recent Backup")
-        recent_backup_label = Gtk.Label(label="Never", halign=Gtk.Align.END)
-        recent_backup_row.add_suffix(recent_backup_label)
+        self.recent_backup_label = Gtk.Label(halign=Gtk.Align.END)
+        recent_backup_row.add_suffix(self.recent_backup_label)
         logs_group.add(recent_backup_row)
 
         # Add other groups to the preferences page
@@ -200,6 +211,9 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
         preferences_page.add(logs_group)
 
         self.add(preferences_page)
+
+        # UI updates
+        self.update_ui_information()
 
         return preferences_page
 
@@ -234,12 +248,12 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
             homogeneous=True,
             valign=Gtk.Align.START,
         )
-        self.results_grid.set_margin_top(10)
-        self.results_grid.set_margin_bottom(10)
-        self.results_grid.set_margin_start(10)
-        self.results_grid.set_margin_end(10)
-        self.results_grid.set_row_spacing(10)
-        self.results_grid.set_column_spacing(10)
+        self.results_grid.set_margin_top(5)
+        self.results_grid.set_margin_bottom(5)
+        self.results_grid.set_margin_start(5)
+        self.results_grid.set_margin_end(5)
+        self.results_grid.set_row_spacing(5)
+        self.results_grid.set_column_spacing(5)
 
         scrolled_results.set_child(self.results_grid)
         results_group.add(scrolled_results)
@@ -740,8 +754,16 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
         """Add a thumbnail for a source to the results grid."""
         thumbnail_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
 
-        # Add an icon or placeholder image
-        thumbnail_icon = Gtk.Image(icon_name="folder-symbolic", pixel_size=48)
+        # Add an icon or thumbnail image
+        file_thumbnail = self.create_thumbnail(source["path"])
+        thumbnail_icon = Gtk.Image()
+        if file_thumbnail:
+            thumbnail_icon.set_from_pixbuf(file_thumbnail)
+            thumbnail_icon.set_size_request(128, 128)  # Force the Gtk.Image widget size
+        else:
+            # Add an icon or placeholder image
+            thumbnail_icon = Gtk.Image(icon_name="folder-symbolic", pixel_size=48)
+            
         thumbnail_box.append(thumbnail_icon)
 
         # Add a label with the source name
@@ -761,20 +783,13 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
         search_button.connect("clicked", lambda b, source=source: self.show_all_file_search(source["name"]))
         thumbnail_box.append(search_button)
 
-        # # Add a restore button
-        # restore_button = Gtk.Button(label="Restore", halign=Gtk.Align.CENTER)
-        # restore_button.connect("clicked", lambda b, source=source: self.on_restore_source_clicked(source["path"]))
-        # thumbnail_box.append(restore_button)
-
         # Add the thumbnail to the results grid
         self.results_grid.append(thumbnail_box)
 
     def create_thumbnail(self, file_path):
         """Create a thumbnail for the given file if it's an image."""
         try:
-            #if self.is_thumbnailable(file_path):
-            #if file_path.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".mp4")):
-            pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_size(file_path, 64, 64)
+            pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_size(file_path, 64, 64) 
             return pixbuf
         except Exception as e:
             pass
@@ -895,6 +910,132 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
         """Remove the success message after a few seconds."""
         self.results_grid.remove(message_label)
         # self.results_grid.show_all()  # Update the display after removal
+# def show_all_file_search(self, name):
+#     """Display item all previous backup dialog."""
+#     restore_dialog = Adw.Window(
+#         transient_for=self,
+#         title="Restore File",
+#         modal=True,
+#         default_width=600,
+#         default_height=400,
+#     )
+
+#     # Header bar with buttons
+#     header_bar = Gtk.HeaderBar()
+
+#     # Fetch results
+#     results = self.get_files_in_directory(name)
+
+#     # Sort results based on extracted date and time from the path
+#     def extract_datetime_from_path(path):
+#         """Extracts and converts date and time from the file path."""
+#         try:
+#             # Assume the path format contains '/<date>/<time>/' near the start
+#             date_time = path.replace(server.backup_folder_name() + '/', '').split('/')[:2]
+#             file_date = date_time[0]  # e.g., '11-12-2024'
+#             file_time = date_time[1]  # e.g., '18-17'
+            
+#             # Convert date and time into a single datetime object
+#             return datetime.datetime.strptime(f"{file_date} {file_time}", "%d-%m-%Y %H-%M")
+#         except (IndexError, ValueError) as e:
+#             # Handle malformed paths or missing date/time
+#             print(f"Error extracting datetime from path {path}: {e}")
+#             return datetime.datetime.min  # Return an extremely old date for sorting fallback
+
+#     # Sort using the extracted datetime
+#     sorted_results = sorted(results, key=lambda x: extract_datetime_from_path(x["path"]), reverse=True)
+
+#     # Limit the number of results
+#     limited_results = sorted_results[:self.page_size]
+
+#     # Scrollable area to display search results
+#     scrolled_results = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
+#     scrolled_results.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+
+#     # FlowBox for displaying restore results (e.g., files or folders)
+#     results_grid = Gtk.FlowBox(
+#         max_children_per_line=5,
+#         selection_mode=Gtk.SelectionMode.NONE,
+#         homogeneous=True,
+#         valign=Gtk.Align.START,
+#     )
+#     results_grid.set_margin_top(10)
+#     results_grid.set_margin_bottom(10)
+#     results_grid.set_margin_start(10)
+#     results_grid.set_margin_end(10)
+#     results_grid.set_row_spacing(10)
+#     results_grid.set_column_spacing(10)
+
+#     scrolled_results.set_child(results_grid)
+
+#     for result in limited_results:
+#         """Add a thumbnail for a source to the results grid."""
+#         thumbnail_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+
+#         # Add an icon or placeholder image
+#         thumbnail_icon = Gtk.Image(icon_name="folder-symbolic", pixel_size=48)
+#         thumbnail_box.append(thumbnail_icon)
+
+#         # Add a label with the source name
+#         source_label = Gtk.Label(label=result['name'], halign=Gtk.Align.CENTER, wrap=True)
+#         thumbnail_box.append(source_label)
+
+#         # Extract and format the date and time
+#         dateframe = str(result['path']).replace(server.backup_folder_name() + '/', '')
+#         try:
+#             # Extract folder date and time
+#             date = dateframe.split('/')[0]  # e.g., '11-12-2024'
+#             time = dateframe.split('/')[1]  # e.g., '18-17'
+#             human_readable_date = f"{date} {time}"  # Combine for display
+#         except (IndexError, ValueError) as e:
+#             # Handle malformed paths or missing data
+#             human_readable_date = "Invalid Timestamp"
+#             print(f"Error extracting date/time from path {result['path']}: {e}")
+
+#         # Add the human-readable date label
+#         source_date = Gtk.Label(label=human_readable_date, halign=Gtk.Align.CENTER, wrap=True)
+#         thumbnail_box.append(source_date)
+
+#         # Add a restore button
+#         open_button = Gtk.Button(label="Open Location", halign=Gtk.Align.CENTER)
+#         open_button.connect("clicked", lambda b, path=result["path"]: threading.Thread(target=self.open_file_location, args=(path, restore_dialog,), daemon=True).start())
+
+#         restore_button = Gtk.Button(label="Restore", halign=Gtk.Align.CENTER)
+#         restore_button.connect("clicked", lambda b, path=result["path"]: threading.Thread(target=self.on_restore_source_clicked, args=(path, restore_dialog,), daemon=True).start())
+
+#         thumbnail_box.append(open_button)
+#         thumbnail_box.append(restore_button)
+
+#         # Add the thumbnail to the results grid
+#         results_grid.append(thumbnail_box)
+
+#     # Main content
+#     main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, margin_top=10)
+#     main_box.set_halign(Gtk.Align.FILL)
+#     restore_dialog.set_content(main_box)
+
+#     # Create status label and progress bar
+#     self.restore_status_label = Gtk.Label()
+#     self.restore_status_label.set_halign(Gtk.Align.CENTER)
+#     self.restore_status_label.set_valign(Gtk.Align.CENTER)
+
+#     self.restore_progress_bar = Gtk.ProgressBar(show_text=True)
+#     self.restore_progress_bar.set_fraction(0.0)
+#     self.restore_progress_bar.hide()
+
+#     # Create a Scrolled Window for the logs
+#     logs_scrolled = Gtk.ScrolledWindow()
+#     logs_scrolled.set_child(scrolled_results)
+#     logs_scrolled.set_vexpand(True)
+
+#     # Pack widgets into the main box
+#     main_box.append(header_bar)
+#     main_box.append(self.restore_status_label)
+#     main_box.append(self.restore_progress_bar)
+#     main_box.append(logs_scrolled)
+
+#     # Show the dialog
+#     restore_dialog.present()
 
     #########################################################################
     # SEARCH ALL 
@@ -913,12 +1054,13 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
         header_bar = Gtk.HeaderBar()
 
         results = self.get_files_in_directory(name)
-        
         # Sort the results by date (latest first)
         sorted_results = sorted(results, key=lambda x: x["date"], reverse=True)
 
         # Limit the number of results
         limited_results = sorted_results[:self.page_size]
+
+        # Extrac date and timeframe
         
         # Scrollable area to display search results
         scrolled_results = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
@@ -956,16 +1098,40 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
 
             # Convert the timestamp to a human-readable format
             timestamp = result['date']
-            human_readable_date = datetime.datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
+            dateframe = str(result['path']).replace(server.backup_folder_name() + '/', '')
+
+            #human_readable_date = datetime.datetime.fromtimestamp(timestamp).strftime('%d-%m-%Y %H:%M:%S')
+            
+            try:
+                # Handle both integer and fractional timestamps
+                # human_readable_date = datetime.datetime.fromtimestamp(float(timestamp)).strftime('%d-%m-%Y %H:%M:%S')
+                date = dateframe.split('/')[:1][0]
+                time = dateframe.split('/')[1:][0]
+                human_readable_date = date + ' ' + time
+            except ValueError as e:
+                # Handle cases where the timestamp is invalid
+                # human_readable_date = "Invalid Timestamp"
+                date = dateframe.split('/')[:1][0]
+                time = dateframe.split('/')[1:][0]
+                human_readable_date = "Invalid Timestamp"
+                print(f"Error converting timestamp {timestamp}: {e}")
 
             # Add the human-readable date label
             source_date = Gtk.Label(label=human_readable_date, halign=Gtk.Align.CENTER, wrap=True)
             thumbnail_box.append(source_date)
 
             # Add a restore button
+            open_button = Gtk.Button(label="Open Location", halign=Gtk.Align.CENTER)
+            open_button.connect("clicked", lambda b, path=result["path"]: threading.Thread(target=self.open_file_location, args=(path, restore_dialog,), daemon=True).start())
+
             restore_button = Gtk.Button(label="Restore", halign=Gtk.Align.CENTER)
             # Ensure the correct path is passed to the restore function
-            restore_button.connect("clicked", lambda b, path=result["path"]: self.on_restore_source_clicked(path, restore_dialog))
+            # restore_button.connect("clicked", lambda b, path=result["path"]: self.on_restore_source_clicked(path, restore_dialog))
+            restore_button.connect("clicked", lambda b, path=result["path"]: threading.Thread(target=self.on_restore_source_clicked, args=(path, restore_dialog,), daemon=True).start())
+            
+            # self.search_timer = Timer(0.5, lambda: threading.Thread(target=self.perform_search, args=(query,), daemon=True).start())
+
+            thumbnail_box.append(open_button)
             thumbnail_box.append(restore_button)
 
             # Add the thumbnail to the results grid
@@ -1013,6 +1179,16 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
                         "date": file_date
                     })
         return file_list
+    
+    def open_file_location(self, source, logs_dialog):
+        file_location: str = '/'.join(str(source).split('/')[:-1])
+        print(file_location)
+        process = sub.run(
+            ['xdg-open', file_location],
+                stdout=sub.PIPE,
+                stderr=sub.PIPE,
+                text=True)
+
     
     def on_restore_source_clicked(self, source, logs_dialog):
         """Handle the restore action for the clicked file."""

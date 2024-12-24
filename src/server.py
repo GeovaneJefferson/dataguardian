@@ -637,6 +637,19 @@ class SERVER:
 		except Exception as e:
 			logging.error(f"copytree_with_progress: {e}")
 
+	def update_recent_backup_information(self):
+		current_datetime: datetime = datetime.now()  # Get the current date and time
+
+		# Format it as "YYYY-MM-DD HH:MM:SS"
+		formatted_datetime: str = str(
+			current_datetime.strftime("%Y-%m-%d %H:%M:%S"))
+		
+		# Update the conf file
+		self.set_database_value(
+			section='RECENT',
+			option='recent_backup_timeframe',
+			value=formatted_datetime)
+		
 	def setup_logging(self):
 		"""Sets up logging for file changes."""
 		MAX_LOG_SIZE: int = 50 * 1024 * 1024  # Example: 50 MB
@@ -655,7 +668,11 @@ class SERVER:
 			# Create a new empty log file
 			with open(self.LOG_LOCATION, 'w'):
 				pass
-	
+
+		# # Convert the timestamp to a human-readable format
+		# timestamp = source["date"]
+		# human_readable_date = datetime.datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
+
 		logging.basicConfig(
 							filename=self.LOG_LOCATION,
 							level=logging.INFO,
