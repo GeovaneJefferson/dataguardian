@@ -164,7 +164,7 @@ class SERVER:
 		self.CONF['BACKUP'] = {
 			'automatically_backup': 'false',
 			'backing_up': 'false',
-			'first_startup': 'false'
+			'status': ''
 		}
 
 		self.CONF['DRIVER'] = {
@@ -571,6 +571,20 @@ class SERVER:
 			current_function_name = inspect.currentframe().f_code.co_name
 			print(f"Error in function {current_function_name}: {e}")
 			exit()
+
+	def write_backup_status(self, status:str):
+		# Get stored driver_location and driver_name
+		self.set_database_value(
+			section='BACKUP',
+			option='status',
+			value=status)
+        
+	def read_backup_status(self) -> str:
+		# Get stored driver_location and driver_name
+		backup_status = self.get_database_value(
+			section='BACKUP',
+			option='status')
+		return backup_status
 
 	def print_progress_bar(self, progress: int, total: int, start_time: float) -> str:
 		bar_length: int = 50

@@ -1,7 +1,7 @@
 from has_driver_connection import has_driver_connection
 from server import *
 
-WAIT_TIME = 5  #Minutes
+WAIT_TIME: int = 5  #Minutes
 
 
 def hash_file(file_path: str) -> str:
@@ -229,6 +229,8 @@ class Daemon:
 		return False
 	
 	async def _make_first_backup(self):
+		server.write_backup_status('Backing up')
+
 		# Before starting the backup, set the flag
 		self.a = True
 		filtered_home: tuple = await self.get_filtered_home_files()
@@ -356,6 +358,7 @@ class Daemon:
 
 				# Try copying the file to the backup path
 				try:
+					server.write_backup_status('Backing up')
 					logging.info(f"Backing up file: {file} to {backup_file_path}")
 					shutil.copy2(file, backup_file_path)
 					success_msg = f"Successfully backed up: {file} to {backup_file_path}"
@@ -538,7 +541,9 @@ class Daemon:
 						logging.info("Waiting for connection to backup device...")
 						connection_logged = False  # Reset status to log when connection is re-established
 
+				server.write_backup_status(f'Sleeping for: {WAIT_TIME * 60} , Minute(s)')
 				print('Resting for:', WAIT_TIME * 60)
+				logging.info('Resting for:', WAIT_TIME * 60)
 				await asyncio.sleep(WAIT_TIME * 60)  # Wait for the specified interval
 		except Exception as e:
 			logging.info(f"Error: {e}")

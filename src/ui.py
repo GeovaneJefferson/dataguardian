@@ -7,7 +7,7 @@ from device_location import device_location
 
 server = SERVER()
 WIDTH = 600
-HEIGHT = 400
+HEIGHT = 600
 
 
 class BackupSettingsWindow(Adw.PreferencesWindow):
@@ -54,6 +54,8 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
         self.auto_select_backup_device()
         self.load_folders_from_config()
         self.display_excluded_folders()  
+
+        self.handle_backup_status()  # Backup status: Monitoring, Backing up etc...
 
 
 ##########################################################################
@@ -176,6 +178,13 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
         self.driver_location_row.add_suffix(self.location_dropdown)
         storage_group.add(self.driver_location_row)
         
+        # Daemon status
+        daemon_satus_row = Adw.ActionRow(title="Backup Status:")
+        self.daemon_status_label = Gtk.Label()
+        self.daemon_status_label.set_halign(Gtk.Align.START)
+        daemon_satus_row.add_suffix(self.daemon_status_label)
+        storage_group.add(daemon_satus_row)
+
         # Dynamically update the device list
         self.available_devices_location()  # Populate the dropdown initially
 
@@ -216,6 +225,13 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
         self.update_ui_information()
 
         return preferences_page
+
+    def handle_backup_status(self):
+        # Get stored driver_location and driver_name
+        backup_status = server.read_backup_status()
+        
+        # Update every time app main window opens
+        self.daemon_status_label.set_text(backup_status)
 
     def create_restore_files_page(self):
         """Creates the Restore Files page."""
@@ -311,6 +327,8 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
         self.save_folders_to_config()
 
         # Debugging: print the current ignored folders
+        logging.info(f"Removed folder: {folder_name}")
+        logging.info(f"Remaining ignored folders: {self.ignored_folders}")
         print(f"Removed folder: {folder_name}")
         print(f"Remaining ignored folders: {self.ignored_folders}")
 
@@ -529,9 +547,11 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
                 self.start_daemon()  # Only start if not running
             true_false = 'true'
             self.create_autostart_entry()  # Create .desktop file for auto startup
+            server.write_backup_status(status='Monitoring')  # Update backup status
         else:
             self.stop_daemon()  # Stop the daemon
             self.remove_autostart_entry()  # Optionally remove autostart entry
+            server.write_backup_status(status='Offline')  # Update backup status
 
         # Update the conf file
         server.set_database_value(
@@ -598,6 +618,7 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
     def display_excluded_folders(self):
         """Display loaded excluded folders."""
         for folder in self.ignored_folders:
+            logging.info("Adding folder:", folder)
             self.add_folder_to_list(folder)
 
     def auto_select_hidden_itens(self):
