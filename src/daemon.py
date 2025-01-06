@@ -541,7 +541,7 @@ class Daemon:
 						logging.info("Waiting for connection to backup device...")
 						connection_logged = False  # Reset status to log when connection is re-established
 
-				server.write_backup_status(f'Sleeping for: {WAIT_TIME * 60} , Minute(s)')
+				server.write_backup_status(f'Sleeping for: {WAIT_TIME} , Minute(s)')
 				print('Resting for:', WAIT_TIME * 60)
 				logging.info('Resting for:', WAIT_TIME * 60)
 				await asyncio.sleep(WAIT_TIME * 60)  # Wait for the specified interval
