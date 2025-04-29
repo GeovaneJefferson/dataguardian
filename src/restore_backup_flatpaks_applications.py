@@ -4,13 +4,16 @@ def restore_backup_flatpaks_applications():
     """Restore Flatpak applications from a backup file."""
     try:
         flatpak_file_path = SERVER().flatpak_txt_location()
+        if not flatpak_file_path or not os.path.isfile(flatpak_file_path):
+            print(f"Invalid or missing flatpak file path: {flatpak_file_path}")
+            exit()
         
-        with open(flatpak_file_path, "r") as read_flatpak_file:
-            flatpaks = [flatpak.strip() for flatpak in read_flatpak_file.readlines()]
+        raise FileNotFoundError(f'{flatpak_file_path} file not found!')
     except FileNotFoundError as e:
-        print(f'{flatpak_file_path} file not found!')
+        print(e)
         exit()
 
+    flatpaks = []  # Replace with logic to retrieve flatpak list, e.g., reading from the file
     for flatpak in flatpaks:
         # if flatpak in read_exclude:
         #     continue
@@ -19,22 +22,19 @@ def restore_backup_flatpaks_applications():
 
             # Install the flatpak
             result = sub.run(
-                [
-                "flatpak",
-                "install",
-                "--system",
-                "--noninteractive",
-                "--assumeyes",
-                "--or-update", flatpak],
+                ["flatpak", "install", "--system", "--noninteractive", "--assumeyes", flatpak],
                 stdout=sub.PIPE, stderr=sub.PIPE)
 
             if result.returncode != 0:
-                print(f"Failed to install {flatpak}: {result.stderr.decode()}")
+                print(f"Failed to install '{flatpak}': {result.stderr.decode()}")
             else:
                 print(f'Successfully installed {flatpak}')
 
+        except sub.SubprocessError as e:
+            print(f"Subprocess error while installing {flatpak}: {e}")
         except Exception as e:
-            print(f"Error while installing {flatpak}: {e}")
+            import traceback
+            print(f"Unexpected error while installing {flatpak}: {e}")
 
 
 if __name__ == '__main__':

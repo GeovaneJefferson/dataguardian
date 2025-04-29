@@ -1,25 +1,34 @@
 # **Data Guardian**
 
-**Data Guardian** is a backup tool designed specifically for **Linux users**. It continuously monitors your files for any new updates and immediately backs them up while maintaining previous versions for easy recovery. This ensures that your important files are always up to date and securely stored.
+**Data Guardian** is a powerful and user-friendly backup tool designed specifically for **Linux users**. It ensures your data is always protected by continuously monitoring your files for changes and performing real-time backups. With version management and easy restoration, **Data Guardian** provides peace of mind for your important files.
+
+---
 
 ## **Features**
-- **Version Backup:** Keep multiple versions of your files, allowing for easy restoration of previous states.  
-- **Continuous File Monitoring:** Automatically scans for new or updated files and performs immediate backups, ensuring that your data is always protected.  
-- **Real-Time Backup:** As files are modified or added, backups are performed immediately, ensuring the most current data is always protected.  
-- **Backup Resumption:** If a backup is interrupted by user action, shutdown, restart, sleep, etc., the backup state is saved and will continue the next time the PC is powered on.  
+
+- **Version Backup:** Maintain multiple versions of your files, enabling easy restoration of previous states.
+- **Continuous File Monitoring:** Automatically detects new or updated files and performs immediate backups.
+- **Real-Time Backup:** Ensures your data is always up to date by backing up files as they are modified or added.
+- **Backup Resumption:** Automatically resumes interrupted backups after shutdown, restart, or sleep.
+- **Version Management:** Tracks file versions, allowing users to restore previous versions effortlessly.
+- **Customizable Exclusions:** Exclude specific folders or hidden files from backups.
+- **Cross-Platform Support:** Works seamlessly with both `.deb` and `.rpm` package managers.
+- **Flatpak Integration:** Supports Flatpak applications for backup and restoration.
+
+---
 
 ## **How It Works**
-- **Data Processing:** The tool continuously monitors file changes (hours, folders accessed, and file sizes) to identify new or updated files.  
-- **Version Management:** Automatically keeps track of file versions, allowing users to restore previous versions easily.  
-- **Saving and Adjusting:** Continuously saves backup data in the database, ensuring that all changes are reflected in the backup history.  
 
-## **Progress**
-- **Backup**: ⬛⬛⬛⬛⬛⬛⬛⬛⬛⬜ (90% complete)  
-- **Restore**: ⬛⬛⬛⬛⬜⬜⬜⬜⬜⬜ (40% complete)  
-- **Version Management**: ⬛⬛⬛⬛⬛⬛⬛⬛⬜⬜ (80% complete)  
-- **UI Enhancements**: ⬛⬛⬛⬛⬛⬛⬛⬜⬜⬜ (70% complete)
-- **Restore Files UI**: ⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ (0% complete)
-- **Migration Assistant**: ⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ (0% complete)
+1. **Data Processing:** Continuously monitors file changes (e.g., timestamps, folder access, file sizes) to identify new or updated files.
+2. **Version Management:** Automatically tracks file versions, ensuring easy restoration of previous states.
+3. **Backup State Management:** Saves the backup state in the database, ensuring all changes are reflected in the backup history.
+4. **Restore Functionality:** Allows users to restore files or applications from backups with a user-friendly interface.
+
+---
 
 ## **Installation**
+
+To install **Data Guardian**, use the following command:
+Terminal:
 $ flatpak-builder --force-clean --user --install repo com.gnome.dataguardian.yaml 
+

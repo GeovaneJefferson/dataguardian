@@ -167,6 +167,12 @@ def copy_file_worker(src: str, dest: str):
         dest (str): Destination file path.
     """
     print(f"Copying from {src} to {dest}")  # Feedback
+    # try:
+    #     os.makedirs(os.path.dirname(dest), exist_ok=True)
+    #     shutil.copy2(src, dest)
+    # except Exception as e:
+    #     logging.error(f"Error copying {src} to {dest}: {e}")
+    #     raise
 
     try:
         if os.path.isdir(src):
@@ -239,7 +245,6 @@ class Daemon:
         self.backup_path_cache = {}
         self.hash_cache = {}
         self.executor = ProcessPoolExecutor()
-        self.current_action = "Idle"  # Track the current action
 
         asyncio.run(self.start_conciderations())
         
@@ -298,7 +303,7 @@ class Daemon:
                     f.write('Backup to .main_backup was interrupted.')
                 logging.info(f"Created interrupted file: {server.INTERRUPTED_MAIN}")
                 print(f"Created interrupted file: {server.INTERRUPTED_MAIN}")  # Feedback
-    
+
 
     ##############################################################################
     # File Size Handling
@@ -442,11 +447,11 @@ class Daemon:
 
             # Iterate through the files and back them up
             for file_path, rel_path, size in filtered_home_files:
-                if not os.path.exists(server.DAEMON_PID_LOCATION):
-                    logging.error("PID file missing. Stopping first backup.")
-                    print("PID file missing. Stopping first backup.")  # Feedback
-                    self.signal_handler(signal.SIGTERM, None)
-                    return
+                # if not os.path.exists(server.DAEMON_PID_LOCATION):
+                #     logging.error("PID file missing. Stopping first backup.")
+                #     print("PID file missing. Stopping first backup.")  # Feedback
+                #     self.signal_handler(signal.SIGTERM, None)
+                #     return
 
                 # File already exists in the backup device
                 dest_path = os.path.join(self.main_backup_dir, rel_path)
@@ -516,12 +521,11 @@ class Daemon:
                     print("Insufficient space for backup.")
                     logging.error("Insufficient space for backup.")
                     return "Insufficient space for backup."
-                
-                server.write_backup_status(f"Backing up: {file}")
 
                 # Copy the file using multiprocessing
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(executor, copy_file_worker, file, backup_file_path)
+                
                 #self.generate_folder_log(file)
                 
                 print(f"Backing up file: {file} to {backup_file_path}")  # Debugging
@@ -706,7 +710,7 @@ class Daemon:
         connection_logged: bool = False
 
         try:
-            await self.load_backup()
+            #await self.load_backup()
 
             while True:
                 if not os.path.exists(server.DAEMON_PID_LOCATION):
@@ -738,9 +742,8 @@ class Daemon:
                         logging.info("Waiting for connection to backup device...")
                         connection_logged = False
 
-                # server.write_backup_status(f'Sleeping for: {WAIT_TIME} minute(s)')
+                server.write_backup_status(f'Sleeping for: {WAIT_TIME} minute(s)')
                 logging.info(f'Resting for: {WAIT_TIME * 60} seconds')
-                print(f"Resting for: {WAIT_TIME * 60} seconds")
                 await asyncio.sleep(WAIT_TIME * 60)
 
         except Exception as e:

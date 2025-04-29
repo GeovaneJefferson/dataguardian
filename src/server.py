@@ -27,10 +27,13 @@ import json
 import fnmatch
 import hashlib
 import stat
+import psutil
+import fcntl
 
 from datetime import datetime, timedelta
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
+import concurrent.futures
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
@@ -44,6 +47,8 @@ signal.signal(signal.SIGPIPE, signal.SIG_IGN)
 
 class SERVER:
 	def __init__(self):
+		self.backup_status = "Idle"  # In-memory shared state for backup status
+
 		self.failed_backup: list = []
 		# Format the current date and time to get the day name
 		self.DAY_NAME: str = datetime.now().strftime("%A").upper().strip()  # SUNDAY, MONDAY...
@@ -154,7 +159,11 @@ class SERVER:
 		# self.DAEMON_PY_LOCATION: str = os.path.join(Path.home(), '.var', 'app', self.ID, 'src', 'daemon.py')
 		self.DAEMON_PY_LOCATION: str = os.path.join('/app/share/dataguardian/src', 'daemon.py')
 		self.DAEMON_PID_LOCATION: str = os.path.join(Path.home(), '.var', 'app', self.ID, 'config', 'daemon.pid')
-
+        
+		self.CACHE = {}
+		self.cache_file = os.path.join(self.backup_folder_name(), ".cache.json")
+		self.load_cache()
+	
 	def create_and_move_files_to_users_home(self):
 		# Create the directory if it doesn't exist
 		config_dir = os.path.dirname(self.CONF_LOCATION)
@@ -237,7 +246,26 @@ class SERVER:
 		else:
 			# logging.info(f"PID file {server.DAEMON_PID_LOCATION} does not exist.")
 			return False
-		
+	
+	def save_cache(self) -> None:
+		"""Saves the CACHE dictionary to a JSON file."""
+		try:
+			with open(self.cache_file, "w") as f:
+				json.dump(self.CACHE, f, indent=4)
+			logging.info("Cache saved successfully.")
+		except Exception as e:
+			logging.error(f"Error saving cache: {e}")
+    
+	def load_cache(self) -> None:
+		"""Loads the CACHE dictionary from a JSON file if it exists."""
+		try:
+			if os.path.exists(self.cache_file):
+				with open(self.cache_file, "r") as f:
+					self.CACHE = json.load(f)
+				logging.info("Cache loaded successfully.")
+		except Exception as e:
+			logging.error(f"Error loading cache: {e}")
+
 	def is_first_backup(self) -> bool:
 		try:
 			if not os.path.exists(self.main_backup_folder()):
@@ -253,9 +281,106 @@ class SERVER:
 		except Exception as e:
 			logging.error('Error while trying to find if is the first backup.')
 
+
+	# EXCLUDE FOLDERS
+	def load_ignored_folders_from_config(self):
+		"""
+		Load ignored folders from the configuration file.
+		"""
+		try:
+			# Get the folder string from the config
+			folder_string = self.get_database_value(
+				section='EXCLUDE_FOLDER', 
+				option='folders')
+			
+			# Split the folder string into a list
+			return [folder.strip() for folder in folder_string.split(',')] if folder_string else []
+		except ValueError as e:
+			print(f"Configuration error: {e}")
+			return []
+		except Exception as e:
+			print(f"Error while loading ignored folders: {e}")
+			return []
+		
+	async def get_filtered_home_files(self) -> tuple:
+		"""
+		Asynchronously retrieves all files from the user's home directory while excluding:
+		- Hidden files (if enabled via configuration)
+		- Unfinished downloads (e.g., files ending with .crdownload, .part, or .tmp)
+		- Directories specified in the EXCLUDE_FOLDER config
+
+		Returns:
+			A tuple (files, total_count) where:
+			- files: List of tuples (src_path, rel_path, size)
+			- total_count: Total number of files found
+		"""
+		home_files = []
+		excluded_dirs = {'__pycache__'}
+		excluded_extensions = {'.crdownload', '.part', '.tmp'}
+
+		ignored_folders = self.load_ignored_folders_from_config() or []
+		
+		try:
+			exclude_hidden_items = bool(self.get_database_value(
+				section='EXCLUDE', 
+				option='exclude_hidden_itens'
+			))
+		except Exception as e:
+			logging.error(f"Error retrieving 'exclude_hidden_itens' config: {e}")
+			exclude_hidden_items = False
+
+		def scan_files():
+			"""Perform file scanning in a separate thread (non-blocking for async)."""
+			for root, _, files in os.walk(self.USER_HOME):
+				if getattr(self, 'suspend_flag', False):
+					self.signal_handler(signal.SIGTERM, None)
+					break
+
+				if any(os.path.commonpath([root, ignored]) == ignored for ignored in ignored_folders):
+					continue
+
+				for file in files:
+					try:
+						src_path = os.path.join(root, file)
+						rel_path = os.path.relpath(src_path, self.USER_HOME)
+
+						# Check if file still exists before getting its size
+						if not os.path.exists(src_path):
+							continue
+
+						size = os.path.getsize(src_path)
+
+						is_hidden_file = (
+							exclude_hidden_items and (
+								file.startswith('.') or 
+								any(part.startswith('.') for part in rel_path.split(os.sep))
+							)
+						)
+						is_unfinished_file = any(file.endswith(ext) for ext in excluded_extensions)
+
+						if not (is_hidden_file or is_unfinished_file):
+							home_files.append((src_path, rel_path, size))
+
+					except FileNotFoundError:
+						logging.warning(f"File not found (skipped): {src_path}")
+						continue
+					except Exception as e:
+						logging.exception(f"Error processing file '{file}' in '{root}': {e}")
+						continue
+
+		# Offload the scanning to a separate thread to keep async performance
+		await asyncio.to_thread(scan_files)
+
+		return home_files, len(home_files)
+	
 	async def delete_oldest_backup_folder(self):
 		"""Deletes the oldest backup folder from the updates directory."""
 		updates_backup_dir = self.backup_folder_name()
+
+		# Check if the updates directory exists
+		if not os.path.exists(updates_backup_dir):
+			logging.warning(f"Backup directory {updates_backup_dir} does not exist.")
+			return
 
 		try:
 			# List all the subfolders (dates) in the updates directory, excluding hidden folders
@@ -272,12 +397,16 @@ class SERVER:
 			backup_dates: list = self.has_backup_dates_to_compare()
 
 			# Delete the oldest folder (first in the sorted list)
+			if not backup_dates:
+				logging.warning("No valid backup dates found to delete.")
+				return  # Exit early if the list is empty
+
 			oldest_folder = backup_dates[0]
 			oldest_folder_path = os.path.join(updates_backup_dir, oldest_folder)
 
 			# Delete the folder and log the action
 			shutil.rmtree(oldest_folder_path)
-			logging.info(f"Deleted the oldest backup folder: {oldest_folder_path}")
+			#logging.info(f"Deleted the oldest backup folder: {oldest_folder_path}")
 
 		except Exception as e:
 			logging.error(f"Error deleting the oldest backup folder: {e}")
@@ -343,22 +472,22 @@ class SERVER:
 				index += 1
 			return f"{size:.2f} {suffixes[index]}"
 
-	# def count_total_files(self, path: str) -> int:
-	# 	total_files: int = 0
-	# 	# Load ignored folders from config
-	# 	ignored_folders = self.load_ignored_folders_from_config()
+	def count_total_files(self, path: str) -> int:
+		total_files: int = 0
+		# Load ignored folders from config
+		ignored_folders = self.load_ignored_folders_from_config()
 
-	# 	for root, dirs, files in os.walk(path):
-	# 		for file in files:
-	# 			src_path: str = os.path.join(root, file)
-	# 			only_dirname: str =  src_path.split('/')[3]
+		for root, dirs, files in os.walk(path):
+			for file in files:
+				src_path: str = os.path.join(root, file)
+				only_dirname: str =  src_path.split('/')[3]
 
-	# 			# Exclude directories that match the ignored folders
-	# 			if any(os.path.commonpath([root, ignored_folder]) == ignored_folder for ignored_folder in ignored_folders):
-	# 				continue
+				# Exclude directories that match the ignored folders
+				if any(os.path.commonpath([root, ignored_folder]) == ignored_folder for ignored_folder in ignored_folders):
+					continue
 
-	# 			total_files += 1
-	# 	return total_files
+				total_files += 1
+		return total_files
 	
 	def has_backup_device_enough_space(
 			self, 
@@ -427,13 +556,20 @@ class SERVER:
 
 	def has_backup_dates_to_compare(self) -> list:
 		# Get all date folder names, parse them as dates, then sort from newest to oldest
+		valid_dates = []
+		for date in os.listdir(self.backup_folder_name()):
+			if '-' in date:
+				try:
+					# Attempt to parse the date
+					datetime.strptime(date, '%d-%m-%Y')
+					valid_dates.append(date)
+				except ValueError:
+					# Skip invalid folder names
+					logging.warning(f"Invalid folder name skipped: {date}")
 		return sorted(
-			[
-				date for date in os.listdir(self.backup_folder_name())
-				if '-' in date
-			],
+			valid_dates,
 			key=lambda d: datetime.strptime(d, '%d-%m-%Y'),
-			reverse=True  # Sort dates from newest to oldest
+        	reverse=True  # Sort dates from newest to oldest
 		)
 	
 	################################################################################
@@ -530,7 +666,7 @@ class SERVER:
 			value = self.CONF.get(section, option)
 			return self.convert_result_to_python_type(value=value)
 
-		except BrokenPipeError:
+		except BrokenPipeError:  
 			# Handle broken pipe without crashing
 			print("Broken pipe occurred, but the app continues running.")
 			return None
@@ -543,48 +679,89 @@ class SERVER:
 			current_function_name = inspect.currentframe().f_code.co_name
 			print(f"Error in function {current_function_name}: {e}")
 			return None
+		
+	def safe_write_config(config, file_path):
+		with open(file_path, 'w') as config_file:
+			# Lock the file for writing
+			fcntl.flock(config_file, fcntl.LOCK_EX)
+			config.write(config_file)
+			# Unlock the file
+			fcntl.flock(config_file, fcntl.LOCK_UN)
 
 	def set_database_value(self, section: str, option: str, value: str):
 		try:
-			# Ensure config file exists
 			if os.path.exists(self.CONF_LOCATION):
-				# Check if the section exists, if not, add it
 				if not self.CONF.has_section(section):
 					self.CONF.add_section(section)
 
-				# Set the option value
-				self.CONF.set(section, option, value)
-
-				# Save the changes to the file
-				with open(self.CONF_LOCATION, 'w') as configfile:
-					self.CONF.write(configfile)
+				# Only update if the value has changed
+				if self.CONF.get(section, option, fallback=None) != value:
+					self.CONF.set(section, option, value)
+					with open(self.CONF_LOCATION, 'w') as configfile:
+						self.CONF.write(configfile)
 			else:
 				raise FileNotFoundError(f"Config file '{self.CONF_LOCATION}' not found")
-
-		except BrokenPipeError:
-			# Handle broken pipe without crashing
-			print("Broken pipe occurred, but the app continues running.")
-		except FileNotFoundError as e:
-			print(f"No connection to config file: {e}")
-			exit()
 		except Exception as e:
-			current_function_name = inspect.currentframe().f_code.co_name
-			print(f"Error in function {current_function_name}: {e}")
-			exit()
+			logging.error(f"Error in set_database_value: {e}")
+			
+	# def set_database_value(self, section: str, option: str, value: str):
+	# 	try:
+	# 		# Ensure config file exists
+	# 		if os.path.exists(self.CONF_LOCATION):
+	# 			# Check if the section exists, if not, add it
+	# 			if not self.CONF.has_section(section):
+	# 				self.CONF.add_section(section)
 
-	def write_backup_status(self, status:str):
-		# Get stored driver_location and driver_name
-		self.set_database_value(
-			section='BACKUP',
-			option='status',
-			value=status)
+	# 			# Set the option value
+	# 			self.CONF.set(section, option, value)
+
+	# 			# Save the changes to the file
+	# 			with open(self.CONF_LOCATION, 'w') as configfile:
+	# 				self.CONF.write(configfile)
+	# 		else:
+	# 			raise FileNotFoundError(f"Config file '{self.CONF_LOCATION}' not found")
+
+	# 	except BrokenPipeError:
+	# 		# Handle broken pipe without crashing
+	# 		print("Broken pipe occurred, but the app continues running.")
+	# 	except FileNotFoundError as e:
+	# 		print(f"No connection to config file: {e}")
+	# 		exit()
+	# 	except Exception as e:
+	# 		current_function_name = inspect.currentframe().f_code.co_name
+	# 		print(f"Error in function {current_function_name}: {e}")
+	# 		exit()
+
+	# def write_backup_status(self, status:str):
+	# 	# Get stored driver_location and driver_name
+	# 	self.set_database_value(
+	# 		section='BACKUP',
+	# 		option='status',
+	# 		value=status)
         
+	# def read_backup_status(self) -> str:
+	# 	# Get stored driver_location and driver_name
+	# 	backup_status = self.get_database_value(
+	# 		section='BACKUP',
+	# 		option='status')
+	# 	return backup_status
+
+	def write_backup_status(self, status: str):
+		"""
+		Update the in-memory backup status and persist it to disk if necessary.
+		"""
+		self.backup_status = status  # Update the in-memory state
+		logging.info(f"Backup status updated: {status}")
+
+		# Optionally persist to disk (e.g., every 10 seconds or on shutdown)
+		# Uncomment the following line if persistence is required:
+		# self.set_database_value(section='BACKUP', option='status', value=status)
+
 	def read_backup_status(self) -> str:
-		# Get stored driver_location and driver_name
-		backup_status = self.get_database_value(
-			section='BACKUP',
-			option='status')
-		return backup_status
+		"""
+		Retrieve the current backup status from memory.
+		"""
+		return self.backup_status
 
 	def print_progress_bar(self, progress: int, total: int, start_time: float) -> str:
 		bar_length: int = 50

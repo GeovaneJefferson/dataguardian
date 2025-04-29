@@ -1,25 +1,39 @@
 from server import *
 
+# Initialize the server instance
 server = SERVER()
 
-def has_driver_connection():
+def has_driver_connection() -> bool:
+    """
+    Checks if there is a connection to the backup driver.
+
+    Returns:
+        bool: True if the backup driver is connected, False otherwise.
+    """
     try:
-        # INI
+        # Retrieve the driver location from the database
         driver_location: str = server.get_database_value(
             section='DRIVER', 
-            option='driver_location')
+            option='driver_location'
+        )
+        logging.info(f"Driver location retrieved: {driver_location}")
     except Exception as e:
-        logging.error(f"Error reading: {e}")
+        # Log an error if the driver location cannot be retrieved
+        logging.error(f"Error reading driver location from database: {e}")
         return False
 
-    # Check conenction to the backup driver
+    # Check connection to the backup driver
     if os.path.exists(driver_location):
-        # print(f"\033[92m[✓]\033[0m Connection to: {driver_location}")
-        return True  # Has connection
+        logging.info(f"Connection to backup driver established: {driver_location}")
+        return True  # Connection exists
     else:
-        # print(f"\033[91m[X]\033[0m Connection to: {driver_location}")
-        return False  # Has no connection
+        logging.warning(f"No connection to backup driver: {driver_location}")
+        return False  # No connection
 
 
 if __name__ == '__main__':
-    pass
+    # Example usage
+    if has_driver_connection():
+        logging.info("Backup driver is connected.")
+    else:
+        logging.error("Backup driver is not connected.")

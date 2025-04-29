@@ -1,0 +1,9 @@
+[Flatpak Ref]
+Name=com.gnome.dataguardian
+Branch=stable
+Title=com.gnome.dataguardian from GitHub
+IsRuntime=false
+Url=https://dl.flathub.org/repo/
+SuggestRemoteName=flathub
+GPGKey=ba16a6d1d395e92214a512f419d94613b127b553e27efed392bc396a7ef73101
+

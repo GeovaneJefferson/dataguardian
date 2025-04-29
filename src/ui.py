@@ -18,7 +18,7 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
 		##########################################################################
 		# Create a Preferences Window with tabs
         self.set_title("Settings")
-        self.set_size_request(WIDTH, HEIGHT)
+        # self.set_size_request(WIDTH, HEIGHT)
         self.set_resizable(True)  # Prevent window from being resized
 		
         ##########################################################################
@@ -55,7 +55,7 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
         self.load_folders_from_config()
         self.display_excluded_folders()  
 
-        self.handle_backup_status()  # Backup status: Monitoring, Backing up etc...
+        #self.handle_backup_status()  # Backup status: Monitoring, Backing up etc...
 
 
 ##########################################################################
@@ -184,6 +184,9 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
         self.daemon_status_label.set_halign(Gtk.Align.START)
         daemon_satus_row.add_suffix(self.daemon_status_label)
         storage_group.add(daemon_satus_row)
+        
+        # Periodically update the daemon status
+        GLib.timeout_add(1000, self.update_daemon_status)
 
         # Dynamically update the device list
         self.available_devices_location()  # Populate the dropdown initially
@@ -223,9 +226,57 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
 
         # UI updates
         self.update_ui_information()
-
         return preferences_page
+    
+    def confirm_backup_device(self, callback):
+        """Show a confirmation dialog to confirm the backup device."""
+        device_name = server.get_database_value(
+            section='DRIVER',
+            option='driver_name'
+        )
 
+        # Create the Adw.MessageDialog
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            modal=True,
+            title="Enable Automatic Backup",
+            body=f"Do you want to back up to this device: '{device_name}'?"
+        )
+
+        # Add responses to the dialog
+        dialog.add_response("yes", "Yes")
+        dialog.set_response_appearance("yes", Adw.ResponseAppearance.SUGGESTED)
+        dialog.add_response("no", "No")
+        dialog.set_default_response("no")
+        dialog.set_close_response("no")
+
+        # Connect to the response signal
+        def on_response(dialog, response):
+            dialog.close()
+            if response == "yes":
+                print(f"User confirmed backup to device: {device_name}")
+                callback(True)  # Call the callback with True
+            else:
+                print("User declined automatic backup.")
+                callback(False)  # Call the callback with False
+
+        dialog.connect("response", on_response)
+
+        # Show the dialog
+        dialog.show()
+
+    def update_daemon_status(self):
+        """
+        Periodically fetch and update the daemon's current action.
+        """
+        try:
+            current_action = server.read_backup_status()  # Fetch the current action from the shared state
+            self.daemon_status_label.set_text(f"{current_action}")
+            print(current_action)
+        except Exception as e:
+            logging.error(f"Error updating daemon status: {e}")
+        return True  # Continue the timeout
+    
     def handle_backup_status(self):
         # Get stored driver_location and driver_name
         backup_status = server.read_backup_status()
@@ -532,32 +583,51 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
         threading.Thread(target=enable_switch_after_cooldown, daemon=True).start()
 	
     def on_auto_backup_switch_toggled(self, switch, pspec):
+        """Handle the 'Back Up Automatically' switch toggle."""
         if self.programmatic_change or self.switch_cooldown_active:
             return  # Exit the function if it's a programmatic change or cooldown active
 
-        # Disable the switch immediately and start the cooldown
-        self.disable_switch_for_cooldown(switch)
+        # Check if the switch is being enabled
+        if switch.get_active():
+            # Disable the switch immediately and start the cooldown
+            self.disable_switch_for_cooldown(switch)
 
-        # Handle system tray switch toggling
-        auto_backup_active = switch.get_active()
-        true_false: str = 'false'
+            # Wait for user's confirmation to proceed
+            def handle_confirmation(confirmed):
+                if not confirmed:
+                    # User declined, reset the switch to its previous state
+                    self.programmatic_change = True
+                    switch.set_active(False)
+                    self.programmatic_change = False
+                    return
 
-        if auto_backup_active:
-            if not server.is_daemon_running():
-                self.start_daemon()  # Only start if not running
-            true_false = 'true'
-            self.create_autostart_entry()  # Create .desktop file for auto startup
-            server.write_backup_status(status='Monitoring')  # Update backup status
+                # User confirmed, proceed with enabling automatic backup
+                if not server.is_daemon_running():
+                    self.start_daemon()  # Only start if not running
+                self.create_autostart_entry()  # Create .desktop file for auto startup
+                server.write_backup_status(status='Monitoring')  # Update backup status
+
+                # Update the conf file
+                server.set_database_value(
+                    section='BACKUP',
+                    option='automatically_backup',
+                    value='true'
+                )
+
+            # Show the confirmation dialog
+            self.confirm_backup_device(handle_confirmation)
         else:
+            # If the switch is being disabled, proceed without showing the dialog
             self.stop_daemon()  # Stop the daemon
             self.remove_autostart_entry()  # Optionally remove autostart entry
             server.write_backup_status(status='Offline')  # Update backup status
 
-        # Update the conf file
-        server.set_database_value(
-            section='BACKUP',
-            option='automatically_backup',
-            value=true_false)
+            # Update the conf file
+            server.set_database_value(
+                section='BACKUP',
+                option='automatically_backup',
+                value='false'
+            )
 
     def create_autostart_entry(self):
         autostart_dir = os.path.expanduser("~/.config/autostart/")
@@ -618,7 +688,7 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
     def display_excluded_folders(self):
         """Display loaded excluded folders."""
         for folder in self.ignored_folders:
-            logging.info("Adding folder:", folder)
+            logging.info("Adding folder: %s", folder)
             self.add_folder_to_list(folder)
 
     def auto_select_hidden_itens(self):
@@ -684,7 +754,25 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
                     self.location_dropdown.set_selected(i)  # Select the item by index
                     break
 
+    # TEST
+    # def auto_select_backup_device(self):
+    #     """Populate the dropdown with available backup devices without auto-selecting."""
+    #     # Get stored driver_name (if any)
+    #     driver_name = server.get_database_value(
+    #         section='DRIVER',
+    #         option='driver_name'
+    #     )
+
+    #     # Get the model of the DropDown widget
+    #     model = self.location_dropdown.get_model()
+
+    #     # Iterate over the items in the model to find the stored device
+    #     for i, item in enumerate(model):
+    #         if item.get_string() == driver_name:  # Use get_string() to get the device name
+    #             self.location_dropdown.set_selected(i)  # Select the stored device by index
+    #             break
     
+
     ##########################################################################
     # SEARCH ENTRY
     ##########################################################################
@@ -1075,7 +1163,7 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
         header_bar = Gtk.HeaderBar()
 
         results = self.get_files_in_directory(name)
-        # Sort the results by date (latest first)
+        # Sort results based on extracted date and time from the path
         sorted_results = sorted(results, key=lambda x: x["date"], reverse=True)
 
         # Limit the number of results
@@ -1094,12 +1182,12 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
             homogeneous=True,
             valign=Gtk.Align.START,
         )
-        results_grid.set_margin_top(10)
-        results_grid.set_margin_bottom(10)
-        results_grid.set_margin_start(10)
-        results_grid.set_margin_end(10)
-        results_grid.set_row_spacing(10)
-        results_grid.set_column_spacing(10)
+        # results_grid.set_margin_top(10)
+        # results_grid.set_margin_bottom(10)
+        # results_grid.set_margin_start(10)
+        # results_grid.set_margin_end(10)
+        # results_grid.set_row_spacing(10)
+        # results_grid.set_column_spacing(10)
 
         scrolled_results.set_child(results_grid)
 
@@ -1214,24 +1302,38 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
     def on_restore_source_clicked(self, source, logs_dialog):
         """Handle the restore action for the clicked file."""
         try:
+            # Update the UI to indicate the restore process has started
             self.restore_status_label.set_label("Restoring file...")
             self.restore_progress_bar.show()
 
+            # Determine the destination path by removing the backup folder prefix
+            # and reconstructing the path relative to the user's home directory
             destination = str(source).replace(server.backup_folder_name(), '')
             destination = '/'.join((destination.split('/')[3:]))  # Remove date and timeframe
             destination = os.path.join(server.USER_HOME, destination)  # Join user home with modded path
 
+            # Debugging: Print the source and destination paths
             print('Restoring:', source)
             print('To:', destination)
 
             # Ensure the restore directory exists
+            # Uncomment the following line to create the directory if it doesn't exist
             # os.makedirs(destination, exist_ok=True)
 
-            # Perform the restore (this example moves the file to the restore location)
-            shutil.copy2(source, destination) 
+            # Perform the restore by copying the file to the destination
+            try:
+                shutil.copy2(source, destination)
+            except FileNotFoundError:
+                # Log an error if the source file is not found
+                logging.error(f"Source file not found: {source}")
+            except PermissionError:
+                # Log an error if there are permission issues during the copy
+                logging.error(f"Permission denied while copying to: {destination}")
 
+            # Debugging: Print a success message
             print(f"Restored {source} to {destination}")
             
+            # Update the UI to indicate the restore process is complete
             self.restore_status_label.set_label("Backup Complete!")
             self.restore_progress_bar.hide()
 
@@ -1242,14 +1344,18 @@ class BackupSettingsWindow(Adw.PreferencesWindow):
             # GLib.idle_add(self.update_progress, source)
             # GLib.timeout_add(500, self.update_progress)
         except Exception as e:
+            # Log any unexpected errors during the restore process
             print(f"Error restoring file: {e}")
 
     def update_progress(self, source):
+        """Update the progress bar during the restore process."""
         current_fraction = self.restore_progress_bar.get_fraction()
         if current_fraction < 1.0:
+            # Increment the progress bar fraction
             self.restore_progress_bar.set_fraction(current_fraction + 0.05)
             return GLib.SOURCE_CONTINUE
         else:
+            # Once the progress is complete, update the status label
             self.restore_status_label.set_label("Backup Complete!")
             return GLib.SOURCE_REMOVE
 
