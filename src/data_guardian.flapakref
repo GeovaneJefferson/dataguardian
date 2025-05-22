@@ -1,8 +1,0 @@
-[Flatpak Ref]
-Title=DataGuardian
-Name=com.gnome.dataguardian
-Comment=A Python GTK4 app for data management.
-Description=DataGuardian helps you manage and safeguard your data effectively.
-Url=https://github.com/GeovaneJefferson/dataguardian
-# Icon=https://github.com/GeovaneJefferson/dataguardian/com.gnome.dataguardian.png
-DefaultBranch=main
