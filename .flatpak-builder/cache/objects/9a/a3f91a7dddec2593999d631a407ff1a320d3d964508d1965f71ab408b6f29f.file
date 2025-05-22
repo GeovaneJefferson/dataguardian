@@ -29,8 +29,6 @@ import hashlib
 import stat
 import psutil
 import fcntl
-import mimetypes
-import cairo
 
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -40,7 +38,7 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 gi.require_version('Gio', '2.0')
-from gi.repository import Gtk, Adw, Gio, GLib, Gdk, GdkPixbuf
+from gi.repository import Gtk, Adw, Gio, GdkPixbuf
 
 
 # Ignore SIGPIPE signal, so that the app doesn't crash
@@ -284,26 +282,6 @@ class SERVER:
 			logging.error('Error while trying to find if is the first backup.')
 
 
-	# Get users device mount point
-	def get_device_for_mountpoint(self, mount_point):
-		try:
-			output = sub.check_output(["findmnt", "-n", "-o", "SOURCE", mount_point])
-			return output.decode("utf-8").strip()  # e.g., "/dev/sdb1"
-		except Exception as e:
-			print("Failed to find device for mount point:", e)
-			return None
-		
-	# Get the filesystem type of a given path
-	def get_filesystem_type(self, path):
-		try:
-			output = sub.check_output(['lsblk', '-no', 'FSTYPE', path])
-			fs_type = output.decode('utf-8').strip()
-			return fs_type or "Unknown"
-		except Exception as e:
-			print("Failed to detect filesystem type:", e)
-			return "Unknown"
-
-
 	# EXCLUDE FOLDERS
 	def load_ignored_folders_from_config(self):
 		"""
@@ -476,28 +454,15 @@ class SERVER:
 	# 		value=timeframe_str,
 	# 		func=self.save_timeframe_to_db)
 
-	def get_user_device_size(self, path: str, get_total: bool) -> str:
-		total, used, device_free_size = shutil.disk_usage(path)
-
-		# Convert to human-readable format (KB, MB, GB, TB)
-		suffixes = ['B', 'KB', 'MB', 'GB', 'TB']
-		index = 0
-		size = total if get_total else used
-		while size >= 1024 and index < len(suffixes) - 1:
-			size /= 1024.0
-			index += 1
-		return f"{size:.2f} {suffixes[index]}"
-
 	def get_item_size(self, item_path: str, human_readable: bool = False) -> str:
-		if not os.path.exists(item_path):
-			return "None"
-		
 		try:
 			size_bytes = os.path.getsize(item_path)
 		except Exception as e:
 			return str(e)
 
-		if human_readable:
+		if not human_readable:
+			return size_bytes
+		else:
 			# Convert to human-readable format (KB, MB, GB, TB)
 			suffixes = ['B', 'KB', 'MB', 'GB', 'TB']
 			index = 0
@@ -506,8 +471,6 @@ class SERVER:
 				size /= 1024.0
 				index += 1
 			return f"{size:.2f} {suffixes[index]}"
-		else:
-			return size_bytes
 
 	def count_total_files(self, path: str) -> int:
 		total_files: int = 0

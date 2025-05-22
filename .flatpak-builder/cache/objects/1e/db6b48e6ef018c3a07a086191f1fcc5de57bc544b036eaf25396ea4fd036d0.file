@@ -62,7 +62,7 @@ def restore_folder(src_root: str, dest_root: str) -> None:
             dest_item = os.path.join(dest_root, relative_path)
 
             # Ensure the destination directory exists.
-            os.makedirs(os.path.dirname(dest_item), exist_ok=True)
+            #os.makedirs(os.path.dirname(dest_item), exist_ok=True)
             try:
                 server.print_progress_bar(
                     progress=copied_files,
@@ -70,10 +70,8 @@ def restore_folder(src_root: str, dest_root: str) -> None:
                     start_time=start_time
                 )
                 copied_files += 1
-                shutil.copy2(src_item, dest_item)
+                #shutil.copy2(src_item, dest_item)
                 print(f"Updated:", src_item, dest_item)
-                print("#" * 40)
-                print("")
             except (FileExistsError, FileNotFoundError) as e:
                 print(f"Error copying {src_item} to {dest_item}: {e}")
                 continue

@@ -1,0 +1,22 @@
+[Application]
+name=com.gnome.dataguardian
+runtime=org.gnome.Platform/x86_64/46
+sdk=org.gnome.Sdk/x86_64/46
+command=dataguardian.sh
+
+[Context]
+shared=network;ipc;
+sockets=x11;wayland;session-bus;
+devices=all;
+filesystems=home;xdg-run/flatpak;xdg-run/gvfsd;host;
+
+[Session Bus Policy]
+org.freedesktop.Flatpak=talk
+
+[Extension com.gnome.dataguardian.Debug]
+directory=lib/debug
+autodelete=true
+no-autodownload=true
+
+[Build]
+built-extensions=com.gnome.dataguardian.Debug;
