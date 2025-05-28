@@ -1,0 +1,7 @@
+[Flatpak Repo]
+Title=Data Guardian
+Name=com.gnome.dataguardian
+Homepage=https://github.com/GeovaneJefferson/dataguardian
+Description=A description of your app.
+Repository=https://github.com/GeovaneJefferson/dataguardian
+GPGKey=ba16a6d1d395e92214a512f419d94613b127b553e27efed392bc396a7ef73101

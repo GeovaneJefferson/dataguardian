@@ -1,0 +1,71 @@
+app-id: com.gnome.dataguardian
+runtime: org.gnome.Platform
+runtime-version: "46"
+sdk: org.gnome.Sdk
+command: dataguardian.sh
+
+finish-args:
+  - --share=ipc
+  - --device=all
+  - --socket=x11
+  - --socket=wayland
+  - --filesystem=host
+  - --filesystem=home
+  - --share=network
+  - --socket=session-bus  
+  - --talk-name=org.freedesktop.Flatpak  # Added to allow communication with the host Flatpak service
+  - --filesystem=xdg-run/flatpak  # Allow access to the flatpak-spawn socket
+  - --filesystem=xdg-run/gvfsd
+  
+modules:
+  - name: dataguardian
+    buildsystem: simple
+    sources:
+      - type: git
+        url: https://github.com/GeovaneJefferson/dataguardian.git
+        branch: main
+    # sources:
+    #   - type: dir
+    #     path: .      
+    build-commands:
+      # Create the main application directory
+      - mkdir -p /app/share/dataguardian
+      
+      # Copy directories
+      - cp -r src /app/share/dataguardian
+      - cp -r data /app/share/dataguardian
+      - cp -r share /app/share/dataguardian
+
+      # Copy the .desktop files
+      - mkdir -p /app/share/applications
+      - cp -r share/applications/com.gnome.dataguardian.desktop /app/share/applications/
+      
+      # Copy icon to the appropriate location
+      - mkdir -p /app/share/icons/hicolor/48x48/apps
+      - cp -r data/icons/com.gnome.dataguardian.png /app/share/icons/hicolor/48x48/apps/
+
+      # Copy the shell script
+      - install -D -m755 dataguardian.sh -t /app/bin
+      - install -D -m755 stop-daemon.sh -t /app/bin
+
+      # Create the config directory in the app's runtime
+      - mkdir -p /app/share/dataguardian/config
+      
+      # Copy AppStream metadata to the correct location
+      # - mkdir -p /app/share/metainfo
+      # - cp -r com.gnome.dataguardian.metainfo.xml /app/share/metainfo/
+      
+      # Install requirements 
+      - pip3 install --prefix=/app -r requirements.txt
+      
+    build-options:
+      build-args:
+        - --share=network
+    # sources:
+    #   - type: git
+    #     url: https://github.com/GeovaneJefferson/dataguardian.git
+    #     commit: 362dadf3d8582d82e44d1473d7a925473258e82ef3b8aa1fccc1f9ae0ff2e034
+    #   - type: file
+    #     path: com.gnome.dataguardian.metainfo.xml
+# cleanup-commands:
+#   - /app/bin/stop-daemon.sh
