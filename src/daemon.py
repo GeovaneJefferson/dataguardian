@@ -10,6 +10,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(me
 
 excluded_dirs = ['__pycache__']
 excluded_extensions = ['.crdownload', '.part', '.tmp']
+should_exit = None  # Flag to indicate if the daemon should exit
 
 ##############################################################################
 # Folder Filtering and Handling
@@ -255,7 +256,7 @@ class Daemon:
             backup_status = '.main_backup' if self.is_backing_up_to_main else 'other backup'
             self.save_backup(backup_status)
         logging.info("System is going to sleep, shut down, restart, PID file do not exist or just terminated. Stopping backup.")
-        self.should_exit = True  # Add this attribute
+        should_exit = True  # Add this attribute
         #exit()
     
     def resume_handler(self, signum, frame):
@@ -708,7 +709,7 @@ class Daemon:
         try:
             await self.load_backup()
 
-            while not self.should_exit:
+            while not should_exit:
                 if not os.path.exists(server.DAEMON_PID_LOCATION):
                     logging.error("PID file missing. Daemon requires exit.")
                     print("PID file missing. Daemon requires exit.")  # Feedback
