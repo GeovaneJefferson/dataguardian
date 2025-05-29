@@ -1,7 +1,7 @@
 from server import *
 from device_location import device_location
 from has_driver_connection import has_driver_connection
-
+from check_package_manager import check_package_manager
 try:
     gi.require_version("Poppler", "0.18")
     from gi.repository import Poppler
@@ -110,6 +110,21 @@ class BackupWindow(Adw.ApplicationWindow):
         devices_box.append(devices_icon)
         devices_box.append(Gtk.Label(label="Devices"))
         self.devices_button.set_child(devices_box)
+        
+        # Full Restore button with icon
+        restore_icon = Gtk.Image.new_from_icon_name("preferences-system-time-symbolic")
+        self.restore_system_button = Gtk.Button()
+        self.restore_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.restore_box.set_sensitive(self.has_connection)
+        self.restore_box.set_halign(Gtk.Align.CENTER)
+        self.restore_box.set_valign(Gtk.Align.CENTER)
+        restore_icon.set_halign(Gtk.Align.CENTER)
+        self.restore_box.append(restore_icon)
+        self.restore_box.append(Gtk.Label(label="System Restore"))
+        self.restore_system_button.set_tooltip_text("" \
+        "This is usually used to restore applications, flatpaks, file and folders after a clean system re/install.")
+        self.restore_system_button.set_child(self.restore_box)
+        self.restore_system_button.connect("clicked", self.on_restore_system_button_clicked)
 
         # Settings button with icon
         settings_icon = Gtk.Image.new_from_icon_name("preferences-system-symbolic")
@@ -129,6 +144,7 @@ class BackupWindow(Adw.ApplicationWindow):
 
         #sidebar.append(overview_button)
         sidebar.append(self.devices_button)
+        sidebar.append(self.restore_system_button)
         #sidebar.append(spacer)
         sidebar.append(settings_button)
         main_content.append(sidebar)
@@ -149,7 +165,7 @@ class BackupWindow(Adw.ApplicationWindow):
         self.search_entry.set_placeholder_text("Search file to restore...")
         self.search_entry.set_margin_top(12)
         self.search_entry.set_hexpand(True)
-        self.search_entry.set_visible(self.has_connection)
+        self.search_entry.set_sensitive(self.has_connection)
         self.search_entry.connect("search-changed", self.on_search_changed)
         center_box.append(self.search_entry)
 
@@ -285,6 +301,11 @@ class BackupWindow(Adw.ApplicationWindow):
             self.logs_label.set_text("")
             self.logs_label.set_markup("<b>Most Recent Backup:</b>\nNever")
 
+        separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        separator.set_margin_top(6)
+        separator.set_margin_bottom(6)
+        info_box.append(separator)
+        
         self.logs_button = Gtk.Button(label="Logs")
         self.logs_button.set_sensitive(bool(self.has_connection))
         self.logs_button.set_hexpand(False)
@@ -293,7 +314,6 @@ class BackupWindow(Adw.ApplicationWindow):
         self.logs_button.connect("clicked", self.show_backup_logs_dialog)  # Show logs, not the progress dialog
         info_box.append(self.logs_button)
         
-
         ##################################################################
         # Open location button
         ##################################################################
@@ -321,6 +341,9 @@ class BackupWindow(Adw.ApplicationWindow):
         # After user selects a file, this button will be enabled,
         # -this will be used to find updates for the selected file.
         self.find_updates = Gtk.Button(label="Find File Versions")
+        self.find_updates.set_tooltip_text(
+            "Search for all available versions of the selected file, including the current and previous backups. "
+            "Use this to restore or review earlier versions of your file.")
         self.find_updates.set_sensitive(False)
         self.find_updates.set_hexpand(False)
         self.find_updates.set_valign(Gtk.Align.CENTER)
@@ -335,7 +358,7 @@ class BackupWindow(Adw.ApplicationWindow):
         info_box.append(spacer)
         
         # Restore button
-        self.restore_button = Gtk.Button(label="Restore")
+        self.restore_button = Gtk.Button(label="Restore File")
         self.restore_button.set_sensitive(False)
         self.restore_button.set_hexpand(False)
         self.restore_button.set_valign(Gtk.Align.CENTER)
@@ -418,8 +441,6 @@ class BackupWindow(Adw.ApplicationWindow):
 		# Startup actions
 		##########################################################################
         self.add_found_devices_to_devices_popover_box()  # Add found devices to the popover
-        # self.automacatically_selected_saved_backup_device()  # Auto-select saved device
-
 
     ##########################################################################
     # BACKUP
@@ -455,6 +476,8 @@ class BackupWindow(Adw.ApplicationWindow):
 
     def on_toggled(self, button, device_path):
         if button.get_active():
+            self.enable_ui_stuff(True) # Enable UI stuff if a device is selected
+            print("Selected device path:", device_path)
             for other in self.location_buttons:
                 if other != button:
                     other.set_active(False)
@@ -472,6 +495,7 @@ class BackupWindow(Adw.ApplicationWindow):
             )
         else:
             print("Deselected device path:", device_path)
+            self.enable_ui_stuff(False) # Disable UI stuff if a device is selected
             # User deselected all devices, clear the config
             server.set_database_value(
                 section='DRIVER',
@@ -484,6 +508,13 @@ class BackupWindow(Adw.ApplicationWindow):
                 value=""
             )
 
+    def on_devices_clicked(self, button):
+        if self.devices_popover.get_visible():
+            self.devices_popover.popdown()
+        else:
+            self.automacatically_selected_saved_backup_device()  # Auto-select saved device
+            self.devices_popover.popup()
+
     def automacatically_selected_saved_backup_device(self):
         # Iterate through location_buttons to find a match and set it active
         for button in self.location_buttons:
@@ -491,15 +522,19 @@ class BackupWindow(Adw.ApplicationWindow):
             if label == f"{self.driver_location}":
                 button.set_active(True)
                 print("Auto-selected backup device:", label)
-                self.search_entry.set_visible(self.has_connection)
+                self.enable_ui_stuff(True) # Enable UI stuff if a device is selected
                 break
 
-    def on_devices_clicked(self, button):
-        if self.devices_popover.get_visible():
-            self.devices_popover.popdown()
-        else:
-            self.automacatically_selected_saved_backup_device()  # Auto-select saved device
-            self.devices_popover.popup()
+    def enable_ui_stuff(self, state:bool):   
+        """
+        True: Enable stuff on the UI. 
+        False: Disable stuff on the UI.
+        """
+        # Already a backup made and has connection
+        if os.path.exists(server.backup_folder_name()) and self.has_connection:
+            # Enable stuff if has connection to backup device
+            self.restore_system_button.set_sensitive(state)
+            self.search_entry.set_sensitive(state)
 
     def on_listbox_selection_changed(self, listbox, row):
         self.restore_button.set_sensitive(row is not None)
@@ -811,10 +846,13 @@ class BackupWindow(Adw.ApplicationWindow):
 
         # Only allow preview for supported types
         previewable = False
+        IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg"}
         TEXT_EXTENSIONS = {".txt", ".py", ".md", ".csv", ".json", ".xml", ".ini", ".log", ".gd", ".js", ".html", ".css", ".sh", ".c", ".cpp", ".h", ".hpp", ".java", ".rs", ".go", ".toml", ".yml", ".yaml"}
         if (ext == ".pdf" or mime == "application/pdf") and POPPLER_AVAILABLE and os.path.exists(filepath):
             previewable = True
         elif (ext in TEXT_EXTENSIONS or mime.startswith("text")) and os.path.exists(filepath):
+            previewable = True
+        elif (ext in IMAGE_EXTENSIONS or mime.startswith("image")) and os.path.exists(filepath):
             previewable = True
 
         if not previewable:
@@ -830,44 +868,25 @@ class BackupWindow(Adw.ApplicationWindow):
         preview_win.set_size_request(300, 200)
 
         # Set a maximum size (e.g., 90% of the screen)
-        #display = Gdk.Display.get_default()
-        #monitor = display.get_primary_monitor()
-        #geometry = monitor.get_geometry()
-        #max_width = int(geometry.width * 0.9)
-        #max_height = int(geometry.height * 0.9)
-        
-        # Set a maximum size (e.g., 90% of the screen)
         display = Gdk.Display.get_default()
         if not display:
-            print("Error: Could not get default display.")
-            # Fallback if no display is available
             max_width = 800
             max_height = 600
         else:
-            # Try to get the primary monitor directly from the display
-            # This method *should* return the primary monitor on both X11 and Wayland
-            # if a primary is configured. If not, it will return None.
             monitor_to_use = display.get_primary_monitor()
-
-            # If no primary monitor was returned, iterate through all monitors
-            # and just pick the first one as a fallback.
             if not monitor_to_use:
-                monitors = display.get_monitors() # GListModel
+                monitors = display.get_monitors()
                 if monitors.get_n_items() > 0:
-                    monitor_to_use = monitors.get_item(0) # Get the first available monitor
+                    monitor_to_use = monitors.get_item(0)
                 else:
-                    print("Warning: No monitors found, using fallback dimensions.")
-                    max_width = 800 # Fallback if no monitors are found at all
-                    max_height = 600 # Fallback if no monitors are found at all
-                    monitor_to_use = None # Ensure it's None if no monitors
-
+                    max_width = 800
+                    max_height = 600
+                    monitor_to_use = None
             if monitor_to_use:
                 geometry = monitor_to_use.get_geometry()
                 max_width = int(geometry.width * 0.9)
                 max_height = int(geometry.height * 0.9)
             else:
-                # This case is covered by the initial fallback, but good to keep clear
-                print("Warning: No monitor could be determined, using fallback dimensions.")
                 max_width = 800
                 max_height = 600
 
@@ -894,6 +913,12 @@ class BackupWindow(Adw.ApplicationWindow):
             textview.get_buffer().set_text(text)
             textview.set_size_request(-1, 350)
             box.append(textview)
+        elif (ext in IMAGE_EXTENSIONS or mime.startswith("image")) and os.path.exists(filepath):
+            picture = Gtk.Picture.new_for_filename(filepath)
+            picture.set_content_fit(Gtk.ContentFit.CONTAIN)
+            picture.set_vexpand(True)
+            picture.set_hexpand(True)
+            box.append(picture)
 
         # Add key controller to the preview window for Spacebar close
         key_controller = Gtk.EventControllerKey()
@@ -911,7 +936,6 @@ class BackupWindow(Adw.ApplicationWindow):
 
         preview_win.connect("close-request", on_close)
         preview_win.present()
-
     def on_settings_clicked(self, button):
         # Only create one settings window at a time
         if getattr(self, "settings_window", None) is not None:
@@ -1067,17 +1091,17 @@ class BackupWindow(Adw.ApplicationWindow):
             self.restore_button.connect("clicked", self.on_restore_button_clicked)
         restore_button.connect("clicked", on_restore_clicked)
         
-        # # Add key controller for Spacebar preview
-        # key_controller = Gtk.EventControllerKey()
-        # def on_key_press(controller, keyval, keycode, state):
-        #     if keyval == Gdk.KEY_space:
-        #         row = listbox.get_selected_row()
-        #         if row and hasattr(row, "file_path"):
-        #             self.open_preview_window(row.file_path)
-        #         return True
-        #     return False
-        # key_controller.connect("key-pressed", on_key_press)
-        # listbox.add_controller(key_controller)
+        # Add key controller for Spacebar preview
+        key_controller = Gtk.EventControllerKey()
+        def on_key_press(controller, keyval, keycode, state):
+            if keyval == Gdk.KEY_space:
+                row = listbox.get_selected_row()
+                if row and hasattr(row, "file_path"):
+                    self.open_preview_window(row.file_path)
+                return True
+            return False
+        key_controller.connect("key-pressed", on_key_press)
+        listbox.add_controller(key_controller)
 
         win.connect("close-request", on_close)
         win.present()
@@ -1090,9 +1114,6 @@ class BackupWindow(Adw.ApplicationWindow):
             abs_selected = os.path.abspath(self.selected_file_path)
             rel_path = os.path.relpath(abs_selected, backup_root)
             destination_path = os.path.join(server.USER_HOME, rel_path)
-
-            print('Restoring:', self.selected_file_path)
-            print('To:', destination_path)
 
             def do_restore():
                 try:
@@ -1190,6 +1211,445 @@ class BackupWindow(Adw.ApplicationWindow):
 
         # Show the dialog
         logs_dialog.present()
+
+    def on_restore_system_button_clicked(self, button):
+        # Modal window
+        win = Gtk.Window(
+            title="System Restore",
+            modal=True,
+            transient_for=self,
+            default_width=600,
+            default_height=500
+        )
+
+        # HeaderBar with Restore button
+        header = Gtk.HeaderBar()
+        restore_btn = Gtk.Button(label="Restore")
+        restore_btn.set_css_classes(["suggested-action"])
+        restore_btn.set_halign(Gtk.Align.END)
+        header.pack_end(restore_btn)
+        win.set_titlebar(header)
+
+        # Stack for pages
+        stack = Gtk.Stack()
+        win.set_child(stack)
+
+        # --- PAGE 1: Selection ---
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16, margin_top=16, margin_bottom=16, margin_start=16, margin_end=16)
+
+        # Applications (Deb/RPM)
+        self.apps_checkbox = Gtk.CheckButton(label="Applications (Deb/RPM)")
+        vbox.append(self.apps_checkbox)
+
+        # Applications dropdown area (hidden by default), with a scrolled window
+        self.apps_dropdown_scrolled = Gtk.ScrolledWindow()
+        self.apps_dropdown_scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        self.apps_dropdown_scrolled.set_vexpand(True)
+        self.apps_dropdown_scrolled.set_hexpand(True)
+        self.apps_dropdown_scrolled.set_visible(False)
+        self.apps_dropdown_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, margin_start=24)
+        self.apps_dropdown_scrolled.set_child(self.apps_dropdown_box)
+        vbox.append(self.apps_dropdown_scrolled)
+
+        def on_apps_toggled(check, pspec=None):
+            self.apps_dropdown_scrolled.set_visible(check.get_active())
+            if check.get_active() and not hasattr(self, "_apps_checkboxes_loaded"):
+                self._apps_checkboxes_loaded = True
+                # Add RPM packages
+                rpm_folder = server.rpm_main_folder()
+                if os.path.exists(rpm_folder):
+                    for pkg in os.listdir(rpm_folder):
+                        if pkg.endswith('.rpm'):
+                            cb = Gtk.CheckButton(label=f"RPM: {pkg}")
+                            cb.package_path = os.path.join(rpm_folder, pkg)
+                            self.apps_dropdown_box.append(cb)
+                # Add DEB packages
+                deb_folder = server.deb_main_folder()
+                if os.path.exists(deb_folder):
+                    for pkg in os.listdir(deb_folder):
+                        if pkg.endswith('.deb'):
+                            cb = Gtk.CheckButton(label=f"DEB: {pkg}")
+                            cb.package_path = os.path.join(deb_folder, pkg)
+                            self.apps_dropdown_box.append(cb)
+                if not any(isinstance(child, Gtk.CheckButton) for child in self.apps_dropdown_box):
+                    self.apps_dropdown_box.append(Gtk.Label(label="No packages found."))
+
+        self.apps_checkbox.connect("toggled", on_apps_toggled)
+
+        # Files/Folders
+        self.files_checkbox = Gtk.CheckButton(label="Files/Folders")
+        vbox.append(self.files_checkbox)
+
+        # Files/Folders dropdown area (hidden by default), with a scrolled window
+        self.files_dropdown_scrolled = Gtk.ScrolledWindow()
+        self.files_dropdown_scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        self.files_dropdown_scrolled.set_vexpand(True)
+        self.files_dropdown_scrolled.set_hexpand(True)
+        self.files_dropdown_scrolled.set_visible(False)
+        self.files_dropdown_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, margin_start=24)
+        self.files_dropdown_scrolled.set_child(self.files_dropdown_box)
+        vbox.append(self.files_dropdown_scrolled)
+
+        def on_files_toggled(check, pspec=None):
+            self.files_dropdown_scrolled.set_visible(check.get_active())
+            if check.get_active() and not hasattr(self, "_files_checkboxes_loaded"):
+                self._files_checkboxes_loaded = True
+                # List all files and folders in main_backup_folder
+                main_folder = server.main_backup_folder()
+                if os.path.exists(main_folder):
+                    items = sorted(os.listdir(main_folder), key=lambda x: x.lower())
+                    for item in items:
+                        item_path = os.path.join(main_folder, item)
+                        hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                        if os.path.isdir(item_path):
+                            icon = Gtk.Image.new_from_icon_name("folder-symbolic")
+                        else:
+                            # Use a generic file icon or guess by extension
+                            ext = os.path.splitext(item)[1].lower()
+                            if ext in [".jpg", ".jpeg", ".png", ".gif"]:
+                                icon_name = "image-x-generic-symbolic"
+                            elif ext in [".pdf"]:
+                                icon_name = "application-pdf-symbolic"
+                            elif ext in [".txt", ".md", ".log"]:
+                                icon_name = "text-x-generic-symbolic"
+                            else:
+                                icon_name = "text-x-generic-symbolic"
+                            icon = Gtk.Image.new_from_icon_name(icon_name)
+                        icon.set_pixel_size(16)
+                        hbox.append(icon)
+                        hbox.append(Gtk.Label(label=item))
+                        cb = Gtk.CheckButton()
+                        cb.set_child(hbox)
+                        cb.restore_path = item_path
+                        cb.is_folder = os.path.isdir(item_path)
+                        self.files_dropdown_box.append(cb)
+                else:
+                    self.files_dropdown_box.append(Gtk.Label(label="No files or folders found."))
+
+        self.files_checkbox.connect("toggled", on_files_toggled)
+
+        # Flatpaks
+        flatpak_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.flatpak_checkbox = Gtk.CheckButton(label="Flatpaks")
+        flatpak_box.append(self.flatpak_checkbox)
+        vbox.append(flatpak_box)
+
+        # Flatpak dropdown area (hidden by default), now with a scrolled window
+        self.flatpak_dropdown_scrolled = Gtk.ScrolledWindow()
+        self.flatpak_dropdown_scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        self.flatpak_dropdown_scrolled.set_vexpand(True)
+        self.flatpak_dropdown_scrolled.set_hexpand(True)
+        self.flatpak_dropdown_scrolled.set_visible(False)
+        self.flatpak_dropdown_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, margin_start=24)
+        self.flatpak_dropdown_scrolled.set_child(self.flatpak_dropdown_box)
+        flatpak_box.append(self.flatpak_dropdown_scrolled)
+
+        def on_flatpak_toggled(check, pspec=None):
+            self.flatpak_dropdown_scrolled.set_visible(check.get_active())
+            if check.get_active() and not hasattr(self, "_flatpak_checkboxes_loaded"):
+                self._flatpak_checkboxes_loaded = True
+                # Load flatpak apps from file
+                flatpak_txt = server.flatpak_txt_location()
+                if os.path.exists(flatpak_txt):
+                    with open(flatpak_txt, "r") as f:
+                        for line in f:
+                            app = line.strip()
+                            if app:
+                                cb = Gtk.CheckButton(label=app)
+                                self.flatpak_dropdown_box.append(cb)
+                else:
+                    self.flatpak_dropdown_box.append(Gtk.Label(label="No Flatpak list found."))
+
+        self.flatpak_checkbox.connect("toggled", on_flatpak_toggled)
+
+        stack.add_named(vbox, "select")
+
+        # --- PAGE 2: Progress ---
+        progress_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=24,
+            margin_top=32,
+            margin_bottom=32,
+            margin_start=32, 
+            margin_end=32)
+        progress_label = Gtk.Label(label="Restoring...")
+        progress_label.set_halign(Gtk.Align.CENTER)
+        progress_bar = Gtk.ProgressBar()
+        progress_bar.set_hexpand(True)
+        progress_bar.set_valign(Gtk.Align.CENTER)
+        progress_box.append(progress_label)
+        progress_box.append(progress_bar)
+
+        # Terminal/log area
+        terminal_scrolled = Gtk.ScrolledWindow()
+        terminal_scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        terminal_scrolled.set_vexpand(True)
+        terminal_scrolled.set_hexpand(True)
+        progress_box.append(terminal_scrolled)
+
+        terminal_view = Gtk.TextView(editable=False, cursor_visible=False, monospace=True)
+        terminal_buffer = terminal_view.get_buffer()
+        terminal_scrolled.set_child(terminal_view)
+
+        stack.add_named(progress_box, "progress")
+
+        # --- Restore button handler ---
+        def on_restore_clicked(btn):
+            restore_btn.set_sensitive(False)
+            stack.set_visible_child_name("progress")
+            progress_bar.set_fraction(0)
+            progress_label.set_text("Restoring...")
+
+            terminal_buffer.set_text("")  # Clear terminal
+
+            # Gather selected items
+            restore_tasks = []
+
+            # Applications (DEB/RPM)
+            if self.apps_checkbox.get_active():
+                child = self.apps_dropdown_box.get_first_child()
+                while child:
+                    if isinstance(child, Gtk.CheckButton) and child.get_active():
+                        label = child.get_label()
+                        pkg_path = getattr(child, "package_path", None)
+                        if pkg_path and os.path.exists(pkg_path):
+                            restore_tasks.append(("app", label, pkg_path))
+                    child = child.get_next_sibling()
+
+            # Files/Folders
+            if self.files_checkbox.get_active():
+                child = self.files_dropdown_box.get_first_child()
+                while child:
+                    if isinstance(child, Gtk.CheckButton) and child.get_active():
+                        # Extract label from the hbox child
+                        label = None
+                        hbox = child.get_child()
+                        if isinstance(hbox, Gtk.Box):
+                            for subchild in hbox:
+                                if isinstance(subchild, Gtk.Label):
+                                    label = subchild.get_text()
+                                    break
+                        if label is None:
+                            label = "Unknown"
+                        restore_path = getattr(child, "restore_path", None)
+                        is_folder = getattr(child, "is_folder", False)
+                        if restore_path and os.path.exists(restore_path):
+                            restore_tasks.append(("file", label, restore_path, is_folder))
+                    child = child.get_next_sibling()
+
+            # Flatpaks
+            if self.flatpak_checkbox.get_active():
+                child = self.flatpak_dropdown_box.get_first_child()
+                while child:
+                    if isinstance(child, Gtk.CheckButton) and child.get_active():
+                        label = child.get_label()
+                        restore_tasks.append(("flatpak", label, None))
+                    child = child.get_next_sibling()
+
+            if not restore_tasks:
+                restore_tasks = [("info", "Nothing selected", None)]
+
+            def append_terminal(text):
+                end_iter = terminal_buffer.get_end_iter()
+                terminal_buffer.insert(end_iter, text + "\n")
+                # Scroll to end
+                mark = terminal_buffer.create_mark(None, terminal_buffer.get_end_iter(), False)
+                terminal_view.scroll_to_mark(mark, 0.0, True, 0.0, 1.0)
+            
+            # Files and Folders restoration
+            def restore_folder_with_incrementals():
+                """
+                Applies incremental updates by copying, for each file, the latest updated version
+                from the update folders (sorted in descending order) to dest_root.
+
+                For each file in the update folders:
+                - Compute the file's path relative to the update folder.
+                - Remove the first path element if necessary (for example, if the update folder's name
+                    is part of the relative path and should not be).
+                - If the file has already been updated by a later (newer) update, skip it.
+                - Otherwise, copy the file to the destination, ensuring that the directory structure is preserved.
+                """
+                base_backup_folder = server.main_backup_folder()
+                
+                # 2. Apply incremental updates (if any)
+                updates_root = server.backup_folder_name()
+                if os.path.exists(updates_root):
+                    incremental_folders = [folder for folder in os.listdir(updates_root)
+                                        if os.path.isdir(os.path.join(updates_root, folder))]
+                    base_folder_name = os.path.basename(base_backup_folder)
+                    if base_folder_name in incremental_folders:
+                        incremental_folders.remove(base_folder_name)
+                    try:
+                        incremental_folders.sort(
+                            key=lambda folder: datetime.strptime(folder, "%d-%m-%Y"),
+                            reverse=True
+                        )
+                    except Exception as e:
+                        GLib.idle_add(append_terminal, f"Error parsing update folder names: {e}")
+                        return
+
+                    updated_files = set()
+                    file_count = 0
+                    for _, date in enumerate(incremental_folders):
+                        update_path = os.path.join(updates_root, str(date))
+                        for root, dirs, files in os.walk(update_path):
+                            for file in files:
+                                rel_path = os.path.relpath(os.path.join(root, file), update_path)
+                                rel_path = "/".join(rel_path.split('/')[1:])
+                                if rel_path in updated_files:
+                                    continue
+                                dest_item = os.path.join(server.HOME_USER, rel_path)
+                                try:
+                                    #os.makedirs(os.path.dirname(dest_item), exist_ok=True)
+                                    #shutil.copy2(os.path.join(root, file), dest_item)
+                                    updated_files.add(rel_path)
+                                    file_count += 1
+                                    # Only update UI every 20 files
+                                    if file_count % 20 == 0:
+                                        GLib.idle_add(progress_label.set_text, f"Restoring: {rel_path}")
+                                        GLib.idle_add(append_terminal, f"Incremental: {os.path.join(root, file)} → {dest_item}")
+                                        time.sleep(0.01)  # Yield to avoid UI freeze
+                                except Exception as e:
+                                    GLib.idle_add(append_terminal, f"Error updating {rel_path}: {e}")
+                    # Final update for the last file
+                    GLib.idle_add(progress_label.set_text, f"Restoring: {rel_path}")
+                    GLib.idle_add(append_terminal, f"Incremental: {os.path.join(root, file)} → {dest_item}")
+
+            def restore_folder(src_root: str, dest_root: str):
+                count = 0
+                for root, dirs, files in os.walk(src_root):
+                    for file in files:
+                        src_item = os.path.join(root, file)
+                        relative_path = os.path.relpath(src_item, src_root)
+                        dest_item = os.path.join(dest_root, relative_path)
+                        try:
+                            os.makedirs(os.path.dirname(dest_item), exist_ok=True)
+                            shutil.copy2(src_item, dest_item)
+                            count += 1
+                            # Only update UI every 20 files
+                            if count % 20 == 0:
+                                GLib.idle_add(progress_label.set_text, f"Restoring: {relative_path}")
+                                GLib.idle_add(append_terminal, f"Restored: {src_item} → {dest_item}")
+                                time.sleep(0.01)  # Yield to avoid UI freeze
+                        except Exception as e:
+                            GLib.idle_add(append_terminal, f"Error copying {src_item}: {e}")
+                # Final update for the last file
+                GLib.idle_add(progress_label.set_text, f"Restoring: {relative_path}")
+                GLib.idle_add(append_terminal, f"Restored: {src_item} → {dest_item}")
+
+            def run_restore():
+                total = len(restore_tasks)
+                folders_restored = False
+                for idx, task in enumerate(restore_tasks):
+                    kind = task[0]
+                    label = task[1]
+                    GLib.idle_add(progress_label.set_text, f"Restoring: {label}")
+                    GLib.idle_add(append_terminal, f"Restoring: {label}")
+
+                    if kind == "app":
+                        package_manager = check_package_manager()
+                        TEST_MODE = False  # Set to True to simulate, False for real install
+                        if package_manager == 'deb':
+                            cmd = ["dpkg", "-i", pkg_path]
+                        elif package_manager == 'rpm':
+                            cmd = ["rpm", "-ivh", "--replacepkgs", pkg_path]
+                        else:
+                            cmd = None
+
+                        if cmd:
+                            try:
+                                if TEST_MODE:
+                                    # Simulate with echo for testing
+                                    proc = sub.Popen(
+                                        ["echo", f"Simulating install of {label} ({' '.join(cmd)})"],
+                                        stdout=sub.PIPE, stderr=sub.PIPE, text=True
+                                    )
+                                else:
+                                    proc = sub.Popen(cmd, stdout=sub.PIPE, stderr=sub.PIPE, text=True)
+                                for line in proc.stdout:
+                                    GLib.idle_add(append_terminal, line.rstrip())
+                                for line in proc.stderr:
+                                    GLib.idle_add(append_terminal, line.rstrip())
+                                proc.wait()
+                                if proc.returncode == 0:
+                                    GLib.idle_add(append_terminal, f"Installed: {label}")
+                                else:
+                                    GLib.idle_add(append_terminal, f"Error installing {label}")
+                            except Exception as e:
+                                GLib.idle_add(append_terminal, f"Error: {e}")
+                    elif kind == "file":
+                        restore_path = task[2]
+                        is_folder = task[3]
+                        TEST_MODE = False  # Set to True to simulate, False for real restore
+                        try:
+                            if is_folder:
+                                if TEST_MODE:
+                                    GLib.idle_add(append_terminal, f"[TEST MODE] Would restore folder: {label}")
+                                else:
+                                    restore_folder(restore_path, server.HOME_USER)
+                                    GLib.idle_add(append_terminal, f"Restored folder: {label}")
+                            else:
+                                dest_item = os.path.join(server.HOME_USER, os.path.basename(restore_path))
+                                if TEST_MODE:
+                                    GLib.idle_add(progress_label.set_text, f"[TEST MODE] Restoring: {os.path.basename(restore_path)}")
+                                    GLib.idle_add(append_terminal, f"[TEST MODE] Would restore file: {restore_path} → {dest_item}")
+                                else:
+                                    shutil.copy2(restore_path, dest_item)
+                                    GLib.idle_add(progress_label.set_text, f"Restoring: {os.path.basename(restore_path)}")
+                                    GLib.idle_add(append_terminal, f"Restored file: {restore_path} → {dest_item}")
+                        except Exception as e:
+                            GLib.idle_add(append_terminal, f"Error restoring {label}: {e}")
+                    elif kind == "flatpak":
+                        flatpak_ref = label
+                        try:
+                            GLib.idle_add(progress_label.set_text, f"Installing Flatpak: {flatpak_ref}")
+                            GLib.idle_add(append_terminal, f"Installing Flatpak: {flatpak_ref}")
+                            print(f"Installing Flatpak: {flatpak_ref}")
+                            # --- TEST MODE: set to True to simulate, False to really install ---
+                            TEST_MODE = False
+
+                            if TEST_MODE:
+                                # Simulate with echo for testing
+                                proc = sub.Popen(
+                                    ["echo", f"Simulating install of {flatpak_ref}"],
+                                    stdout=sub.PIPE, stderr=sub.PIPE, text=True
+                                )
+                            else:
+                                # Real Flatpak install
+                                proc = sub.Popen(
+                                    ["flatpak", "install", "--system", "--noninteractive", "--assumeyes", flatpak_ref],
+                                    stdout=sub.PIPE, stderr=sub.PIPE, text=True
+                                )
+                            for line in proc.stdout:
+                                GLib.idle_add(append_terminal, line.rstrip())
+                            for line in proc.stderr:
+                                GLib.idle_add(append_terminal, line.rstrip())
+                            proc.wait()
+                            if proc.returncode == 0:
+                                GLib.idle_add(append_terminal, f"Successfully installed Flatpak: {flatpak_ref}")
+                            else:
+                                GLib.idle_add(append_terminal, f"Failed to install Flatpak '{flatpak_ref}'")
+                        except Exception as e:
+                            GLib.idle_add(append_terminal, f"Error installing Flatpak {flatpak_ref}: {e}")
+                    elif kind == "info":
+                        GLib.idle_add(append_terminal, label)
+
+                    GLib.idle_add(progress_bar.set_fraction, (idx + 1) / total)
+                    time.sleep(0.2)
+
+                # After all restores, do incrementals if any folder was restored
+                if folders_restored:
+                    restore_folder_with_incrementals()
+
+                GLib.idle_add(progress_bar.set_fraction, 1.0)
+                GLib.idle_add(progress_label.set_text, "Restore Complete!")
+                GLib.idle_add(append_terminal, "Restore Complete!")
+                GLib.idle_add(restore_btn.set_sensitive, True)
+
+            threading.Thread(target=run_restore, daemon=True).start()
+
+        restore_btn.connect("clicked", on_restore_clicked)
+        win.present()
 
 
 class SettingsWindow(Adw.PreferencesWindow):

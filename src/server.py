@@ -50,6 +50,8 @@ signal.signal(signal.SIGPIPE, signal.SIG_IGN)
 class SERVER:
 	def __init__(self):
 		self.backup_status = "Idle"  # In-memory shared state for backup status
+		self.backup_in_progress = False
+		self.suspend_flag = False
 
 		self.failed_backup: list = []
 		# Format the current date and time to get the day name
@@ -166,6 +168,19 @@ class SERVER:
 		self.cache_file = os.path.join(self.backup_folder_name(), ".cache.json")
 		self.load_cache()
 	
+	##############################################################################
+	# Signal, Loading and Saving Handling
+	##############################################################################
+	def save_backup(self, process=None):
+		logging.info("Saving settings...")
+		print("Saving settings...")  # Feedback
+		if process == '.main_backup':
+			if not os.path.exists(self.INTERRUPTED_MAIN):
+				with open(self.INTERRUPTED_MAIN, 'w') as f:
+					f.write('Backup to .main_backup was interrupted.')
+				logging.info(f"Created interrupted file: {self.INTERRUPTED_MAIN}")
+				print(f"Created interrupted file: {self.INTERRUPTED_MAIN}")  # Feedback
+    
 	def create_and_move_files_to_users_home(self):
 		# Create the directory if it doesn't exist
 		config_dir = os.path.dirname(self.CONF_LOCATION)
@@ -193,6 +208,7 @@ class SERVER:
 
 		self.CONF['RECENT'] = {
 			'recent_backup_file_path': '',
+			'recent_backup_timeframe': '',
 		}
 
 		# Save the config to the file
@@ -324,76 +340,76 @@ class SERVER:
 			print(f"Error while loading ignored folders: {e}")
 			return []
 		
-	async def get_filtered_home_files(self) -> tuple:
-		"""
-		Asynchronously retrieves all files from the user's home directory while excluding:
-		- Hidden files (if enabled via configuration)
-		- Unfinished downloads (e.g., files ending with .crdownload, .part, or .tmp)
-		- Directories specified in the EXCLUDE_FOLDER config
+	# async def get_filtered_home_files(self) -> tuple:
+	# 	"""
+	# 	Asynchronously retrieves all files from the user's home directory while excluding:
+	# 	- Hidden files (if enabled via configuration)
+	# 	- Unfinished downloads (e.g., files ending with .crdownload, .part, or .tmp)
+	# 	- Directories specified in the EXCLUDE_FOLDER config
 
-		Returns:
-			A tuple (files, total_count) where:
-			- files: List of tuples (src_path, rel_path, size)
-			- total_count: Total number of files found
-		"""
-		home_files = []
-		excluded_dirs = {'__pycache__'}
-		excluded_extensions = {'.crdownload', '.part', '.tmp'}
+	# 	Returns:
+	# 		A tuple (files, total_count) where:
+	# 		- files: List of tuples (src_path, rel_path, size)
+	# 		- total_count: Total number of files found
+	# 	"""
+	# 	home_files = []
+	# 	excluded_dirs = {'__pycache__'}
+	# 	excluded_extensions = {'.crdownload', '.part', '.tmp'}
 
-		ignored_folders = self.load_ignored_folders_from_config() or []
+	# 	ignored_folders = self.load_ignored_folders_from_config() or []
 		
-		try:
-			exclude_hidden_items = bool(self.get_database_value(
-				section='EXCLUDE', 
-				option='exclude_hidden_itens'
-			))
-		except Exception as e:
-			logging.error(f"Error retrieving 'exclude_hidden_itens' config: {e}")
-			exclude_hidden_items = False
+	# 	try:
+	# 		exclude_hidden_items = bool(self.get_database_value(
+	# 			section='EXCLUDE', 
+	# 			option='exclude_hidden_itens'
+	# 		))
+	# 	except Exception as e:
+	# 		logging.error(f"Error retrieving 'exclude_hidden_itens' config: {e}")
+	# 		exclude_hidden_items = False
 
-		def scan_files():
-			"""Perform file scanning in a separate thread (non-blocking for async)."""
-			for root, _, files in os.walk(self.USER_HOME):
-				if getattr(self, 'suspend_flag', False):
-					self.signal_handler(signal.SIGTERM, None)
-					break
+	# 	def scan_files():
+	# 		"""Perform file scanning in a separate thread (non-blocking for async)."""
+	# 		for root, _, files in os.walk(self.USER_HOME):
+	# 			if getattr(self, 'suspend_flag', False):
+	# 				self.signal_handler(signal.SIGTERM, None)
+	# 				break
 
-				if any(os.path.commonpath([root, ignored]) == ignored for ignored in ignored_folders):
-					continue
+	# 			if any(os.path.commonpath([root, ignored]) == ignored for ignored in ignored_folders):
+	# 				continue
 
-				for file in files:
-					try:
-						src_path = os.path.join(root, file)
-						rel_path = os.path.relpath(src_path, self.USER_HOME)
+	# 			for file in files:
+	# 				try:
+	# 					src_path = os.path.join(root, file)
+	# 					rel_path = os.path.relpath(src_path, self.USER_HOME)
 
-						# Check if file still exists before getting its size
-						if not os.path.exists(src_path):
-							continue
+	# 					# Check if file still exists before getting its size
+	# 					if not os.path.exists(src_path):
+	# 						continue
 
-						size = os.path.getsize(src_path)
+	# 					size = os.path.getsize(src_path)
 
-						is_hidden_file = (
-							exclude_hidden_items and (
-								file.startswith('.') or 
-								any(part.startswith('.') for part in rel_path.split(os.sep))
-							)
-						)
-						is_unfinished_file = any(file.endswith(ext) for ext in excluded_extensions)
+	# 					is_hidden_file = (
+	# 						exclude_hidden_items and (
+	# 							file.startswith('.') or 
+	# 							any(part.startswith('.') for part in rel_path.split(os.sep))
+	# 						)
+	# 					)
+	# 					is_unfinished_file = any(file.endswith(ext) for ext in excluded_extensions)
 
-						if not (is_hidden_file or is_unfinished_file):
-							home_files.append((src_path, rel_path, size))
+	# 					if not (is_hidden_file or is_unfinished_file):
+	# 						home_files.append((src_path, rel_path, size))
 
-					except FileNotFoundError:
-						logging.warning(f"File not found (skipped): {src_path}")
-						continue
-					except Exception as e:
-						logging.exception(f"Error processing file '{file}' in '{root}': {e}")
-						continue
+	# 				except FileNotFoundError:
+	# 					logging.warning(f"File not found (skipped): {src_path}")
+	# 					continue
+	# 				except Exception as e:
+	# 					logging.exception(f"Error processing file '{file}' in '{root}': {e}")
+	# 					continue
 
-		# Offload the scanning to a separate thread to keep async performance
-		await asyncio.to_thread(scan_files)
+	# 	# Offload the scanning to a separate thread to keep async performance
+	# 	await asyncio.to_thread(scan_files)
 
-		return home_files, len(home_files)
+	# 	return home_files, len(home_files)
 	
 	async def delete_oldest_backup_folder(self):
 		"""Deletes the oldest backup folder from the updates directory."""
