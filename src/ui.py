@@ -550,7 +550,6 @@ class BackupWindow(Adw.ApplicationWindow):
             self.selected_file_path = path  # ← Store the full path
             self.left_breadcrumbs.set_label(path.replace(server.backup_folder_name(), "").lstrip(os.sep))
             self.selected_item_size = server.get_item_size(path, True)
-            #self.show_preview(path)
             print("Selected item path:", path)
         else:
             self.device_name_label.set_text("")
@@ -868,7 +867,7 @@ class BackupWindow(Adw.ApplicationWindow):
         preview_win.set_default_size(600, 400)
         preview_win.set_resizable(True)
         preview_win.set_deletable(True)
-        preview_win.set_size_request(300, 200)
+        preview_win.set_size_request(400, 600)
 
         # Set a maximum size (e.g., 90% of the screen)
         display = Gdk.Display.get_default()
@@ -894,7 +893,7 @@ class BackupWindow(Adw.ApplicationWindow):
                 max_height = 600
 
         preview_win.set_default_size(min(600, max_width), min(400, max_height))
-        preview_win.set_size_request(300, 200)
+        preview_win.set_size_request(400, 600)
 
         # Add a scrolled window for the content
         scrolled = Gtk.ScrolledWindow()
@@ -912,6 +911,8 @@ class BackupWindow(Adw.ApplicationWindow):
                 text = f.read(4096)
             textview = Gtk.TextView()
             textview.set_editable(False)
+            textview.set_vexpand(True)
+            textview.set_hexpand(True)
             textview.set_wrap_mode(Gtk.WrapMode.WORD)
             textview.get_buffer().set_text(text)
             textview.set_size_request(-1, 350)
@@ -1004,12 +1005,23 @@ class BackupWindow(Adw.ApplicationWindow):
         # Header bar with Close and Restore buttons
         header = Gtk.HeaderBar()
         # header.set_show_close_button(True)
+        #header.set_size_request(210, -1)
+        #header.set_margin_top(12)
+        #header.set_margin_bottom(12)
+        #header.set_margin_start(12)
+        #header.set_margin_end(12)
         win.set_titlebar(header)
 
-        restore_button = Gtk.Button(label="Restore")
+        restore_button = Gtk.Button(label="Restore File")
         restore_button.set_css_classes(["suggested-action"])
         restore_button.set_sensitive(False)
         header.pack_start(restore_button)
+
+        open_file_location = Gtk.Button(label="Open File Location")
+        # open_file_location.set_css_classes(["suggested-action"])
+        open_file_location.set_sensitive(False)
+        open_file_location.connect("clicked", self.on_open_location_clicked)
+        header.pack_start(open_file_location)
 
         # Main content: List of updates
         vbox = Gtk.Box(
@@ -1030,6 +1042,8 @@ class BackupWindow(Adw.ApplicationWindow):
         vbox.append(scrolled)
 
         listbox = Gtk.ListBox()
+        listbox.set_vexpand(True)
+        listbox.set_hexpand(True)
         scrolled.set_child(listbox)
 
         # For status messages
@@ -1083,6 +1097,19 @@ class BackupWindow(Adw.ApplicationWindow):
         # Enable restore button only when a row is selected
         def on_row_selected(lb, row):
             restore_button.set_sensitive(row is not None)
+            open_file_location.set_sensitive(row is not None)
+
+            if row:
+                # Use the correct file path for the selected version
+                path: str = getattr(row, "file_path", None)
+                self.selected_file_path = path  # Store the full path for restore
+                open_file_location.selected_path = path  # Attach to the button for location opening
+                print("Selected item path:", path)
+            else:
+                self.device_name_label.set_text("")
+                self.selected_file_path = None
+                open_file_location.selected_path = None
+
         listbox.connect("row-selected", on_row_selected)
 
         # Restore logic
