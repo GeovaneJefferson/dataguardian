@@ -2,6 +2,9 @@ from server import *
 from device_location import device_location
 from has_driver_connection import has_driver_connection
 from check_package_manager import check_package_manager
+# Configure logging for the daemon
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+
 try:
     gi.require_version("Poppler", "0.18")
     from gi.repository import Poppler
@@ -1226,7 +1229,7 @@ class BackupWindow(Adw.ApplicationWindow):
         header = Gtk.HeaderBar()
         restore_btn = Gtk.Button(label="Restore")
         restore_btn.set_css_classes(["suggested-action"])
-        restore_btn.set_halign(Gtk.Align.END)
+        restore_btn.set_halign(Gtk.Align.START)
         header.pack_end(restore_btn)
         win.set_titlebar(header)
 
@@ -1882,17 +1885,28 @@ class SettingsWindow(Adw.PreferencesWindow):
         dialog.connect("response", on_response)
 
         # Show the dialog
-        dialog.show()
+        dialog.present()
 
     def start_daemon(self):
         """Start the daemon and store its PID, ensuring only one instance runs."""
-        # Start a new daemon process
-        process = sub.Popen(['python3', server.DAEMON_PY_LOCATION], start_new_session=True)
+        try:
+            # Start a new daemon process
+            process = sub.Popen(
+                ['python3', server.DAEMON_PY_LOCATION],
+                start_new_session=True,
+                close_fds=True,
+                stdout=sub.DEVNULL,
+                stderr=sub.DEVNULL
+            )
 
-        # Store the new PID in the file
-        with open(server.DAEMON_PID_LOCATION, 'w') as f:
-            f.write(str(process.pid))
-        print(f"Daemon started with PID {process.pid}.")
+            # Store the new PID in the file
+            with open(server.DAEMON_PID_LOCATION, 'w') as f:
+                f.write(str(process.pid))
+            print(f"Daemon started with PID {process.pid}.")
+            logging.info(f"Daemon started with PID {process.pid}.")
+        except Exception as e:
+            print(f"Failed to start daemon: {e}")
+            logging.error(f"Failed to start daemon: {e}")
 
     def stop_daemon(self):
         """Stop the daemon by reading its PID."""
@@ -2017,6 +2031,7 @@ class BackupApp(Adw.Application):
 
 
 def main():
+    server.setup_logging()
     app = BackupApp()
     return app.run(None)
 
