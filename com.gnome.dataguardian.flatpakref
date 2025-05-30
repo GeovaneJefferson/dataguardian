@@ -1,12 +1,9 @@
 [Flatpak Ref]
-Name=com.gnome.dataguardian
+Title=DataGuardian
+Name=dataguardian
 Branch=stable
-Title=Data Guardian
-IsRuntime=false
-Url=https://geovanejefferson.github.io/dataguardian/
-SuggestRemoteName=dataguardian-repo
+Url=https://geovanejefferson.github.io/dataguardian/repo/
+Homepage=https://github.com/GeovaneJefferson/dataguardian
+AppId=com.gnome.dataguardian
+SuggestRemoteName=dataguardian-github
 
-[RuntimeRepo]
-Url=https://dl.flathub.org/repo/
-GPGKey=ba16a6d1d395e92214a512f419d94613b127b553e27efed392bc396a7ef73101
-SuggestRemoteName=flathub

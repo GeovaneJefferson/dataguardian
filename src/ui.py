@@ -2,8 +2,6 @@ from server import *
 from device_location import device_location
 from has_driver_connection import has_driver_connection
 from check_package_manager import check_package_manager
-# Configure logging for the daemon
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
 try:
     gi.require_version("Poppler", "0.18")

@@ -878,10 +878,9 @@ class SERVER:
 
 	def update_recent_backup_information(self):
 		current_datetime: datetime = datetime.now()  # Get the current date and time
-
-		# Format it as "YYYY-MM-DD HH:MM:SS"
+		# Format the datetime as a string
 		formatted_datetime: str = str(
-			current_datetime.strftime("%Y-%m-%d %H:%M:%S"))
+			current_datetime.strftime("%d-%m-%Y %H:%M:%S"))
 		
 		# Update the conf file
 		self.set_database_value(

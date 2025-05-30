@@ -755,15 +755,11 @@ class Daemon:
         start_time = time.time()
         batch_size = 10
         date_folder = None  # Only create when needed
+        any_files_backed_up: bool = False
 
         logging.info("Processing backups...")
-
         try:
             total_files = len(self.filtered_home)
-            # print("-" * 40)
-            # print(f"Total files to back up: {total_files}")
-            # print("-" * 40)
-
             for i in range(0, total_files, batch_size):
                 batch = self.filtered_home[i:i + batch_size]
                 for file_path, rel_path, size in batch:
@@ -790,6 +786,8 @@ class Daemon:
                                     date_folder=None
                                 )
                             )
+                            any_files_backed_up = True
+
                         elif self.file_was_updated(file_path, rel_path):
                             logging.info(f"Updated file: {file_path}")
                             needs_update = True
@@ -806,7 +804,6 @@ class Daemon:
                                         logging.error("Unable to free enough space for backup.")
                                         continue  # Skip this file
                                 os.makedirs(os.path.join(self.updates_backup_dir, date_folder), exist_ok=True)
-                                #print(f"Generated date folder: {date_folder}")
 
                             tasks.append(
                                 self.backup_file(
@@ -822,18 +819,17 @@ class Daemon:
 
                     except Exception as file_error:
                         logging.error(f"Error processing file {file_path}: {file_error}")
-                        #print(f"Error processing file {file_path}: {file_error}")
 
-                # Process the current batch
+                # Tasks are gathered in batches to avoid overwhelming the executor
                 if tasks:
-                    # print()
-                    # print("-" * 40)
-                    # print(f"Processing batch of {len(tasks)} files...")
                     await asyncio.gather(*tasks)
                     tasks = []
 
-            server.update_recent_backup_information()
-            logging.info("Backup tasks completed successfully")
+            if any_files_backed_up:
+                server.update_recent_backup_information()
+                logging.info("Backup tasks completed successfully")
+            else:
+                logging.info("No files needed backup; recent backup information not updated.")
 
         except Exception as e:
             logging.error(f"Error in process_backups: {e}")
@@ -845,9 +841,9 @@ class Daemon:
 
 if __name__ == "__main__":
     server = SERVER()
+    server.setup_logging()  # Logging must be set up before creating the daemon
     daemon = Daemon()
         
-    server.setup_logging()
     setproctitle.setproctitle(f'{server.APP_NAME} - daemon')
 
     signal.signal(signal.SIGTERM, daemon.signal_handler)
