@@ -5,9 +5,6 @@ from has_driver_connection import has_driver_connection
 WAIT_TIME = 5  # Minutes
 COPY_CONCURRENCY = 10
 
-# Configure logging for the daemon
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
-
 excluded_dirs = ['__pycache__']
 excluded_extensions = ['.crdownload', '.part', '.tmp']
 should_exit = None  # Flag to indicate if the daemon should exit
@@ -32,37 +29,49 @@ def load_ignored_folders_from_config():
         logging.error(f"Error while loading ignored folders: {e}")
         return []
     
-def get_top_level_folder_size(folder_path: str) -> int:
-    """
-    Calculate the total size of the immediate contents of a folder (files and subfolders).
-
-    Args:
-        folder_path (str): The path to the folder.
-
-    Returns:
-        int: The total size of the folder's immediate contents in bytes.
-    """
+def get_folder_size_recursive(folder_path: str) -> int:
     total_size = 0
-    try:
-        with os.scandir(folder_path) as entries:
-            for entry in entries:
-                try:
-                    if entry.is_file(follow_symlinks=False):
-                        total_size += entry.stat(follow_symlinks=False).st_size
-                    elif entry.is_dir(follow_symlinks=False):
-                        # Add the size of the directory itself (not its contents)
-                        total_size += entry.stat(follow_symlinks=False).st_size
-                except FileNotFoundError:
-                    logging.warning(f"Skipped missing entry: {entry.name}")
-                    continue
-                except Exception as e:
-                    logging.error(f"Error processing entry {entry.name}: {e}")
-                    continue
-    except FileNotFoundError:
-        logging.warning(f"Folder not found: {folder_path}")
-    except Exception as e:
-        logging.error(f"Error processing folder {folder_path}: {e}")
+    for dirpath, dirnames, filenames in os.walk(folder_path):
+        for f in filenames:
+            fp = os.path.join(dirpath, f)
+            try:
+                if not os.path.islink(fp):  # Optionally skip symlinks
+                    total_size += os.path.getsize(fp)
+            except Exception as e:
+                logging.warning(f"Could not get size for {fp}: {e}")
     return total_size
+
+# def get_top_level_folder_size(folder_path: str) -> int:
+#     """
+#     Calculate the total size of the immediate contents of a folder (files and subfolders).
+
+#     Args:
+#         folder_path (str): The path to the folder.
+
+#     Returns:
+#         int: The total size of the folder's immediate contents in bytes.
+#     """
+#     total_size = 0
+#     try:
+#         with os.scandir(folder_path) as entries:
+#             for entry in entries:
+#                 try:
+#                     if entry.is_file(follow_symlinks=False):
+#                         total_size += entry.stat(follow_symlinks=False).st_size
+#                     elif entry.is_dir(follow_symlinks=False):
+#                         # Add the size of the directory itself (not its contents)
+#                         total_size += entry.stat(follow_symlinks=False).st_size
+#                 except FileNotFoundError:
+#                     logging.warning(f"Skipped missing entry: {entry.name}")
+#                     continue
+#                 except Exception as e:
+#                     logging.error(f"Error processing entry {entry.name}: {e}")
+#                     continue
+#     except FileNotFoundError:
+#         logging.warning(f"Folder not found: {folder_path}")
+#     except Exception as e:
+#         logging.error(f"Error processing folder {folder_path}: {e}")
+#     return total_size
 
 def get_changed_subfolders(folder_path: str, backup_folder_path: str) -> list:
     """
@@ -78,14 +87,14 @@ def get_changed_subfolders(folder_path: str, backup_folder_path: str) -> list:
     changed_subfolders = []
 
     # Check if the parent folder has changed
-    current_folder_size = get_top_level_folder_size(folder_path)
-    backup_folder_size = get_top_level_folder_size(backup_folder_path) if os.path.exists(backup_folder_path) else 0
+    current_folder_size = get_folder_size_recursive(folder_path)
+    backup_folder_size = get_folder_size_recursive(backup_folder_path) if os.path.exists(backup_folder_path) else 0
 
     if current_folder_size == backup_folder_size:
         #print(f"Skipping folder '{folder_path}' as its size is unchanged.")  # Feedback
         return changed_subfolders  # Skip processing subfolders if the parent folder hasn't changed
 
-    print(f"Folder '{folder_path}' has changed. Checking subfolders...")  # Feedback
+    #print(f"Folder '{folder_path}' has changed. Checking subfolders...")  # Feedback
 
     # Process subfolders only if the parent folder has changed
     for sub_entry in os.scandir(folder_path):
@@ -96,15 +105,15 @@ def get_changed_subfolders(folder_path: str, backup_folder_path: str) -> list:
         backup_subfolder_path = os.path.join(backup_folder_path, sub_entry.name)
 
         # Get the size of the subfolder and its backup
-        current_subfolder_size = get_top_level_folder_size(subfolder_path)
-        backup_subfolder_size = get_top_level_folder_size(backup_subfolder_path) if os.path.exists(backup_subfolder_path) else 0
+        current_subfolder_size = get_folder_size_recursive(subfolder_path)
+        backup_subfolder_size = get_folder_size_recursive(backup_subfolder_path) if os.path.exists(backup_subfolder_path) else 0
 
         # Compare subfolder sizes
         if current_subfolder_size != backup_subfolder_size:
-            print(f"Subfolder '{sub_entry.name}' has changed.")  # Feedback
+            #print(f"Subfolder '{sub_entry.name}' has changed.")  # Feedback
             changed_subfolders.append(subfolder_path)
-        else:
-            print(f"Skipping subfolder '{sub_entry.name}' as its size is unchanged.")  # Feedback
+        # else:
+        #     print(f"Skipping subfolder '{sub_entry.name}' as its size is unchanged.")  # Feedback
 
     return changed_subfolders
 
@@ -117,8 +126,8 @@ def process_changed_subfolder(subfolder_path: str, backup_subfolder_path: str, h
         backup_subfolder_path (str): The path to the corresponding backup subfolder.
         home_files (list): The list to store identified files.
     """
-    print(f"Processing subfolder: {subfolder_path}")  # Feedback
-    print(f"Backup subfolder path: {backup_subfolder_path}")  # Feedback
+    # print(f"Processing subfolder: {subfolder_path}")  # Feedback
+    # print(f"Backup subfolder path: {backup_subfolder_path}")  # Feedback
 
     for root, dirs, files in os.walk(subfolder_path):
         # Exclude hidden subdirectories and directories in excluded_dirs
@@ -126,12 +135,12 @@ def process_changed_subfolder(subfolder_path: str, backup_subfolder_path: str, h
         for file in files:
             try:
                 if file.startswith('.'):  # Skip hidden files
-                    print(f"Skipping hidden file: {file}")  # Feedback
+                    #print(f"Skipping hidden file: {file}")  # Feedback
                     continue
 
                 src_path = os.path.join(root, file)
                 if not os.path.exists(src_path):  # Skip files that don't exist
-                    print(f"File not found: {src_path}")  # Feedback
+                    #print(f"File not found: {src_path}")  # Feedback
                     continue
 
                 rel_path = os.path.relpath(src_path, server.USER_HOME)
@@ -141,17 +150,17 @@ def process_changed_subfolder(subfolder_path: str, backup_subfolder_path: str, h
                 is_unfinished_file = any(file.endswith(ext) for ext in excluded_extensions)
 
                 if is_unfinished_file:
-                    print(f"Skipping unfinished file: {file}")  # Feedback
+                    #print(f"Skipping unfinished file: {file}")  # Feedback
                     continue
 
                 home_files.append((src_path, rel_path, size))
             except FileNotFoundError:
                 logging.warning(f"Skipped missing file: {file}")
-                print(f"Warning: Skipped missing file: {file}")  # Feedback
+                #print(f"Warning: Skipped missing file: {file}")  # Feedback
                 continue
             except Exception as e:
                 logging.error(f"Error processing file {file}: {e}")
-                print(f"Error processing file {file}: {e}")  # Feedback
+                #print(f"Error processing file {file}: {e}")  # Feedback
                 continue
 
 
@@ -166,20 +175,23 @@ def copy_file_worker(src: str, dest: str):
         src (str): Source file path.
         dest (str): Destination file path.
     """
-    print(f"Copying from {src} to {dest}")  # Feedback
-
     try:
-        if os.path.isdir(src):
-            # If the source is a directory, use shutil.copytree
-            shutil.copytree(src, dest, dirs_exist_ok=True)
+        if os.path.islink(src):
+            linkto = os.readlink(src)
+            # Check if the symlink target exists (relative to the symlink's directory)
+            symlink_dir = os.path.dirname(src)
+            target_path = os.path.join(symlink_dir, linkto)
+            if not os.path.exists(target_path):
+                logging.warning(f"Skipping broken symlink: {src} -> {linkto}")
+                return  # Skip this file
+            os.symlink(linkto, dest)
+        elif os.path.isdir(src):
+            shutil.copytree(src, dest, dirs_exist_ok=True, symlinks=True)
         else:
-            # If the source is a file, use shutil.copy2
             os.makedirs(os.path.dirname(dest), exist_ok=True)
-            shutil.copy2(src, dest)
+            shutil.copy2(src, dest, follow_symlinks=False)
     except Exception as e:
         logging.error(f"Error copying {src} to {dest}: {e}")
-        raise
-
 
 ##############################################################################
 # Flatpak Handling
@@ -234,6 +246,7 @@ class Daemon:
         self.start_time = time.time()
         self.backup_in_progress = False
         self.suspend_flag = False
+        self.is_backing_up_to_main = None
         self.main_backup_dir = server.main_backup_folder()
         self.updates_backup_dir = server.backup_folder_name()
         self.backup_path_cache = {}
@@ -266,7 +279,7 @@ class Daemon:
     async def load_backup(self):
         if os.path.exists(server.INTERRUPTED_MAIN):
             logging.info("Resuming backup to .main_backup from interrupted state.")
-            print("Resuming backup to .main_backup from interrupted state.")  # Feedback
+            #print("Resuming backup to .main_backup from interrupted state.")  # Feedback
             self.is_backing_up_to_main = True
             #filtered_home = await self.get_filtered_home_files()
 
@@ -279,26 +292,26 @@ class Daemon:
                 if os.path.exists(dest_path):
                     continue
 
-                print(f"Backing up interrupted file: {path}")  # Feedback
+                #print(f"Backing up interrupted file: {path}")  # Feedback
                 await self.backup_file(file=path, new_file=True, executor=self.executor)
 
             logging.info("Successfully backed up to .main.")
-            print("Successfully backed up to .main.")  # Feedback
+            #print("Successfully backed up to .main.")  # Feedback
             self.is_backing_up_to_main = False
 
             if os.path.exists(server.INTERRUPTED_MAIN):
                 os.remove(server.INTERRUPTED_MAIN)
-                print(f"Removed interrupted file: {server.INTERRUPTED_MAIN}")  # Feedback
+                #print(f"Removed interrupted file: {server.INTERRUPTED_MAIN}")  # Feedback
 
     def save_backup(self, process=None):
         logging.info("Saving settings...")
-        print("Saving settings...")  # Feedback
+        #print("Saving settings...")  # Feedback
         if process == '.main_backup':
             if not os.path.exists(server.INTERRUPTED_MAIN):
                 with open(server.INTERRUPTED_MAIN, 'w') as f:
                     f.write('Backup to .main_backup was interrupted.')
                 logging.info(f"Created interrupted file: {server.INTERRUPTED_MAIN}")
-                print(f"Created interrupted file: {server.INTERRUPTED_MAIN}")  # Feedback
+                #print(f"Created interrupted file: {server.INTERRUPTED_MAIN}")  # Feedback
     
 
     ##############################################################################
@@ -372,22 +385,22 @@ class Daemon:
                 continue
 
             # Get the size of the top-level folder and its backup
-            current_folder_size = get_top_level_folder_size(folder_path)
-            backup_folder_size = get_top_level_folder_size(backup_folder_path) if os.path.exists(backup_folder_path) else 0
+            current_folder_size = get_folder_size_recursive(folder_path)
+            backup_folder_size = get_folder_size_recursive(backup_folder_path) if os.path.exists(backup_folder_path) else 0
 
             # Compare folder sizes
             if current_folder_size == backup_folder_size:
-                print(f"Skipping folder '{top_level_folder}' as its size is unchanged.")  # Feedback
+                #print(f"Skipping folder '{top_level_folder}' as its size is unchanged.")  # Feedback
                 continue
 
-            print(f"Processing folder '{top_level_folder}' as its size has changed.")  # Feedback
+            #print(f"Processing folder '{top_level_folder}' as its size has changed.")  # Feedback
 
             # Get changed subfolders
             changed_subfolders = get_changed_subfolders(folder_path, backup_folder_path)
 
             # Process each changed subfolder
             for subfolder_path in changed_subfolders:
-                print(f"Processing changed subfolder '{subfolder_path}'...")  # Feedback
+                #print(f"Processing changed subfolder '{subfolder_path}'...")  # Feedback
                 backup_subfolder_path = os.path.join(backup_folder_path, os.path.basename(subfolder_path))
                 process_changed_subfolder(subfolder_path, backup_subfolder_path, home_files)
 
@@ -439,13 +452,13 @@ class Daemon:
             date_folder = datetime.now().strftime("%d-%m-%Y/%H-%M")
             os.makedirs(os.path.join(self.updates_backup_dir, date_folder), exist_ok=True)
             logging.info(f"Generated date folder: {date_folder}")
-            print(f"Generated date folder: {date_folder}")  # Feedback
+            #print(f"Generated date folder: {date_folder}")  # Feedback
 
             # Iterate through the files and back them up
             for file_path, rel_path, size in filtered_home_files:
                 if not os.path.exists(server.DAEMON_PID_LOCATION):
                     logging.error("PID file missing. Stopping first backup.")
-                    print("PID file missing. Stopping first backup.")  # Feedback
+                    #print("PID file missing. Stopping first backup.")  # Feedback
                     self.signal_handler(signal.SIGTERM, None)
                     return
 
@@ -479,9 +492,15 @@ class Daemon:
 
         except Exception as e:
             logging.error(f"Error during first backup: {e}")
-            print(f"Error during first backup: {e}")  # Feedback
+            #print(f"Error during first backup: {e}")  # Feedback
     
-    async def backup_file(self, file: str, new_file: bool, executor: ProcessPoolExecutor, progress: int = 0, total_files: int = 0, start_time: float = 0, date_folder: str = None):
+    async def backup_file(
+            self, file:str, new_file:bool, 
+            executor:ProcessPoolExecutor, 
+            progress:int = 0, 
+            total_files:int = 0, 
+            start_time:float = 0, 
+            date_folder:str = None):
         """
         Back up a file to the appropriate backup directory using multiprocessing.
 
@@ -512,12 +531,13 @@ class Daemon:
                     #date_folder = datetime.now().strftime("%d-%m-%Y/%H-%M")
                     backup_file_path = self.get_backup_file_path(file, date_folder)
 
-                # Check if there is sufficient space
-                if not self.has_sufficient_space(file):
-                    print("Insufficient space for backup.")
-                    logging.error("Insufficient space for backup.")
-                    return "Insufficient space for backup."
-                
+                if not self.has_sufficient_space(file):  # Check if there is enough space in backup device
+                    logging.warning("Not enough space, attempting to free space by deleting old backups...")
+                    file_size = os.path.getsize(file)
+                    if not server.free_space_by_deleting_oldest_backups(file_size):  # Attempt to free space
+                        logging.error("Unable to free enough space for backup.")
+                        return  # Or skip this file
+                    
                 server.write_backup_status(f"Backing up: {file}")
 
                 # Copy the file using multiprocessing
@@ -525,7 +545,7 @@ class Daemon:
                 await loop.run_in_executor(executor, copy_file_worker, file, backup_file_path)
                 #self.generate_folder_log(file)
                 
-                print(f"Backing up file: {file} to {backup_file_path}")  # Debugging
+                #print(f"Backing up file: {file} to {backup_file_path}")  # Debugging
                 logging.info(f"Successfully backed up: {file} to {backup_file_path}")
                 return f"Successfully backed up: {file} to {backup_file_path}"
 
@@ -604,35 +624,15 @@ class Daemon:
 
                                 # Compare file size
                                 if updated_file_size != current_file_size:
-                                    print(file_path)
-                                    print(updated_file_path)
-                                    logging.info("File size mismatch detected.")
-                                    print(f"File size mismatch detected. Current: {current_file_size}, Backup: {updated_file_size}")  # Debugging
                                     return True
 
                                 # Compare modification time
                                 if updated_file_mtime != current_file_mtime:
-                                    logging.info("Modification time mismatch detected.")
-                                    print("Modification time mismatch detected.")
                                     return True
 
                                 # Compare file hashes
                                 current_file_hash = self.hash_file_with_cache(file_path)
                                 updated_file_hash = self.hash_file_with_cache(updated_file_path)
-
-                                print()
-                                print()
-                                print("-" * 40)
-                                print(f"Updated backup file: {updated_file_path}")  # Debugging
-                                print(f"Updated backup file size: {updated_file_size}", updated_file_size==current_file_size)  # Debugging
-                                print("Updated file mtime:", updated_file_mtime, updated_file_mtime==current_file_mtime)  # Debugging
-                                print(updated_file_hash, updated_file_hash==current_file_hash)  # Debugging
-                                print()
-                                print(f"Current file: {file_path}")  # Debugging
-                                print("current_file_size:", current_file_size)  # Debugging
-                                print("current_file_mtime:", current_file_mtime)  # Debugging
-                                print(current_file_hash)
-                                print("-" * 40)
 
                                 logging.debug(f"Current hash: {current_file_hash}, Backup hash: {updated_file_hash}")
                                 if updated_file_hash != current_file_hash:
@@ -660,13 +660,13 @@ class Daemon:
             # Compare file size
             if main_file_size != current_file_size:
                 logging.info("File size mismatch detected in main backup.")
-                print("File size mismatch detected in main backup.")
+                #print("File size mismatch detected in main backup.")
                 return True
 
             # Compare modification time
             if main_file_mtime != current_file_mtime:
                 logging.info("Modification time mismatch detected in main backup.")
-                print("Modification time mismatch detected in main backup.")
+                #print("Modification time mismatch detected in main backup.")
                 return True
 
             # Compare file hashes
@@ -690,12 +690,12 @@ class Daemon:
             logging.debug(f"Current hash: {current_file_hash}, Main backup hash: {main_file_hash}")
             if main_file_hash != current_file_hash:
                 logging.info("Hash mismatch detected in main backup.")
-                print("Hash mismatch detected in main backup.")
+                #print("Hash mismatch detected in main backup.")
                 return True
 
         # If the file is not found in any backup location, assume it has not been updated
         logging.info(f"File is unchanged: {file_path}")
-        print("File is unchanged:", file_path)  # Debugging
+        #print("File is unchanged:", file_path)  # Debugging
         return False
     
 
@@ -712,7 +712,7 @@ class Daemon:
             while not should_exit:
                 if not os.path.exists(server.DAEMON_PID_LOCATION):
                     logging.error("PID file missing. Daemon requires exit.")
-                    print("PID file missing. Daemon requires exit.")  # Feedback
+                    #print("PID file missing. Daemon requires exit.")  # Feedback
                     self.signal_handler(signal.SIGTERM, None)
                     return
 
@@ -746,97 +746,101 @@ class Daemon:
 
         except Exception as e:
             logging.error(f"Error: {e}")
-            print(f"Error: {e}")  # Feedback
+            #print(f"Error: {e}")  # Feedback
 
     async def process_backups(self):
         tasks = []
         executor = ProcessPoolExecutor()
-        progress = 0  # Track the number of files processed
-        start_time = time.time()  # Track the start time for the progress bar
-        batch_size = 10  # Number of files to process in each batch
-        #date_folder_was_created: bool = False  # Flag to check if the date folder was created
-        date_folder: bool = None  # Defer creation of the date folder
+        progress = 0
+        start_time = time.time()
+        batch_size = 10
+        date_folder = None  # Only create when needed
 
         logging.info("Processing backups...")
 
         try:
-            total_files = len(self.filtered_home)  # Total number of files to back up
+            total_files = len(self.filtered_home)
+            # print("-" * 40)
+            # print(f"Total files to back up: {total_files}")
+            # print("-" * 40)
 
-            print("-" * 40)
-            print(f"Total files to back up: {total_files}")  # Feedback
-            print("-" * 40)
-
-            # Generate the date folder once for the entire backup session
-            date_folder = datetime.now().strftime("%d-%m-%Y/%H-%M")
-            os.makedirs(os.path.join(self.updates_backup_dir, date_folder), exist_ok=True)  # Ensure the folder is created
-            print(f"Generated date folder: {date_folder}")  # Debugging
-
-            # Split files into batches
             for i in range(0, total_files, batch_size):
                 batch = self.filtered_home[i:i + batch_size]
-                for file_path, rel_path, size in batch:  # file_path = Home file path
+                for file_path, rel_path, size in batch:
                     try:
-                        # # This is used to check if file exists in the main backup folder
                         modded_main_file_path = os.path.join(self.main_backup_dir, os.path.relpath(file_path, server.USER_HOME))
                         if not os.path.exists(server.DAEMON_PID_LOCATION):
                             logging.warning("PID file missing. Stopping backup process.")
                             self.signal_handler(signal.SIGTERM, None)
                             return
 
-                        # Detection for New/Updated Files
+                        # Determine if this file needs to go in the date folder (updated) or main (new)
+                        needs_update = False
                         if not os.path.exists(modded_main_file_path):
                             logging.info(f"New file: {file_path}")
+                            # For new files, you may want to use main backup or date folder. Adjust as needed.
                             tasks.append(
                                 self.backup_file(
-                                    file_path, 
-                                    new_file=True, 
-                                    executor=executor, 
-                                    progress=progress, 
-                                    total_files=total_files, 
+                                    file_path,
+                                    new_file=True,
+                                    executor=executor,
+                                    progress=progress,
+                                    total_files=total_files,
                                     start_time=start_time,
-                                    date_folder=None))
+                                    date_folder=None
+                                )
+                            )
                         elif self.file_was_updated(file_path, rel_path):
                             logging.info(f"Updated file: {file_path}")
-                            
-                            # # A date folder was not already created
-                            # if not date_folder_was_created:
-                            #     date_folder_was_created = True  # Set the flag to True
-                            #     date_folder = datetime.now().strftime("%d-%m-%Y/%H-%M")
-                            #     os.makedirs(os.path.join(self.updates_backup_dir, date_folder), exist_ok=True)
-                            #     print(f"Generated date folder: {date_folder}")  # Debugging
+                            needs_update = True
+
+                        if needs_update:
+                            # Only create the date folder if we have an updated file and haven't created it yet
+                            if date_folder is None:
+                                date_folder = datetime.now().strftime("%d-%m-%Y/%H-%M")
+                                # Check if enough space for this file, or try to free space
+                                file_size = os.path.getsize(file_path)
+                                if not self.has_sufficient_space(file_path):
+                                    logging.warning("Not enough space, attempting to free space by deleting old backups...")
+                                    if not server.free_space_by_deleting_oldest_backups(file_size):
+                                        logging.error("Unable to free enough space for backup.")
+                                        continue  # Skip this file
+                                os.makedirs(os.path.join(self.updates_backup_dir, date_folder), exist_ok=True)
+                                #print(f"Generated date folder: {date_folder}")
 
                             tasks.append(
                                 self.backup_file(
-                                    file_path, 
-                                    new_file=False, 
-                                    executor=executor, 
-                                    progress=progress, 
-                                    total_files=total_files, 
+                                    file_path,
+                                    new_file=False,
+                                    executor=executor,
+                                    progress=progress,
+                                    total_files=total_files,
                                     start_time=start_time,
-                                    date_folder=date_folder))
+                                    date_folder=date_folder
+                                )
+                            )
 
                     except Exception as file_error:
                         logging.error(f"Error processing file {file_path}: {file_error}")
-                        print(f"Error processing file {file_path}: {file_error}")  # Feedback
+                        #print(f"Error processing file {file_path}: {file_error}")
 
                 # Process the current batch
                 if tasks:
-                    print()
-                    print("-" * 40)
-                    print(f"Processing batch of {len(batch)} files...")  # Feedback
+                    # print()
+                    # print("-" * 40)
+                    # print(f"Processing batch of {len(tasks)} files...")
                     await asyncio.gather(*tasks)
-                    tasks = []  # Clear tasks for the next batch
+                    tasks = []
 
             server.update_recent_backup_information()
             logging.info("Backup tasks completed successfully")
-            #date_folder_was_created = False  # Reset the date folder creation flag
 
         except Exception as e:
             logging.error(f"Error in process_backups: {e}")
-            print(f"Error in process_backups: {e}")  # Feedback
+            #print(f"Error in process_backups: {e}")
         finally:
             executor.shutdown()
-            print("Backup process completed.")  # Feedback
+            #print("Backup process completed.")  # Feedback
 
 
 if __name__ == "__main__":

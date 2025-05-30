@@ -173,13 +173,13 @@ class SERVER:
 	##############################################################################
 	def save_backup(self, process=None):
 		logging.info("Saving settings...")
-		print("Saving settings...")  # Feedback
+		#print("Saving settings...")  # Feedback
 		if process == '.main_backup':
 			if not os.path.exists(self.INTERRUPTED_MAIN):
 				with open(self.INTERRUPTED_MAIN, 'w') as f:
 					f.write('Backup to .main_backup was interrupted.')
 				logging.info(f"Created interrupted file: {self.INTERRUPTED_MAIN}")
-				print(f"Created interrupted file: {self.INTERRUPTED_MAIN}")  # Feedback
+				#print(f"Created interrupted file: {self.INTERRUPTED_MAIN}")  # Feedback
     
 	def create_and_move_files_to_users_home(self):
 		# Create the directory if it doesn't exist
@@ -306,7 +306,7 @@ class SERVER:
 			output = sub.check_output(["findmnt", "-n", "-o", "SOURCE", mount_point])
 			return output.decode("utf-8").strip()  # e.g., "/dev/sdb1"
 		except Exception as e:
-			print("Failed to find device for mount point:", e)
+			#print("Failed to find device for mount point:", e)
 			return None
 		
 	# Get the filesystem type of a given path
@@ -316,7 +316,7 @@ class SERVER:
 			fs_type = output.decode('utf-8').strip()
 			return fs_type or "Unknown"
 		except Exception as e:
-			print("Failed to detect filesystem type:", e)
+			#print("Failed to detect filesystem type:", e)
 			return "Unknown"
 
 
@@ -334,10 +334,10 @@ class SERVER:
 			# Split the folder string into a list
 			return [folder.strip() for folder in folder_string.split(',')] if folder_string else []
 		except ValueError as e:
-			print(f"Configuration error: {e}")
+			#print(f"Configuration error: {e}")
 			return []
 		except Exception as e:
-			print(f"Error while loading ignored folders: {e}")
+			#print(f"Error while loading ignored folders: {e}")
 			return []
 		
 	# async def get_filtered_home_files(self) -> tuple:
@@ -411,45 +411,40 @@ class SERVER:
 
 	# 	return home_files, len(home_files)
 	
-	async def delete_oldest_backup_folder(self):
-		"""Deletes the oldest backup folder from the updates directory."""
-		updates_backup_dir = self.backup_folder_name()
+	def free_space_by_deleting_oldest_backups(self, required_space):
+		"""
+		Delete oldest backup folders until required_space is available.
+		Returns True if enough space is freed, False otherwise.
+		"""
+		backup_root = self.backup_folder_name()
+		while True:
+			statvfs = os.statvfs(backup_root)
+			available_space = statvfs.f_frsize * statvfs.f_bavail
+			if available_space >= required_space:
+				return True  # Enough space now
 
-		# Check if the updates directory exists
-		if not os.path.exists(updates_backup_dir):
-			logging.warning(f"Backup directory {updates_backup_dir} does not exist.")
-			return
-
-		try:
-			# List all the subfolders (dates) in the updates directory, excluding hidden folders
-			backup_folders = [
-				d for d in os.listdir(updates_backup_dir)
-				if os.path.isdir(os.path.join(updates_backup_dir, d)) and not d.startswith('.')
+			# Find all date folders
+			date_folders = [
+				os.path.join(backup_root, d)
+				for d in os.listdir(backup_root)
+				if os.path.isdir(os.path.join(backup_root, d))
 			]
+			if not date_folders:
+				#print("No backup folders found to delete.")
+				logging.error("No more backup folders to delete, but still not enough space.")
+				return False
 
-			if not backup_folders:
-				logging.warning("No backup folders available to delete.")
-				return  # Exit early if there are no folders to delete
-
-			# Sort folders by date (assuming DD-MM-YYYY format)
-			backup_dates: list = self.has_backup_dates_to_compare()
-
-			# Delete the oldest folder (first in the sorted list)
-			if not backup_dates:
-				logging.warning("No valid backup dates found to delete.")
-				return  # Exit early if the list is empty
-
-			oldest_folder = backup_dates[0]
-			oldest_folder_path = os.path.join(updates_backup_dir, oldest_folder)
-
-			# Delete the folder and log the action
-			shutil.rmtree(oldest_folder_path)
-			#logging.info(f"Deleted the oldest backup folder: {oldest_folder_path}")
-
-		except Exception as e:
-			logging.error(f"Error deleting the oldest backup folder: {e}")
-			raise  # Re-raise the exception to propagate the error
-
+			# Sort by creation time (oldest first)
+			date_folders.sort(key=lambda x: os.path.getctime(x))
+			oldest = date_folders[0]
+			try:
+				shutil.rmtree(oldest)
+				#print(f"Deleting old backup folder: {oldest}")
+				logging.warning(f"Deleted old backup folder to free space: {oldest}")
+			except Exception as e:
+				logging.error(f"Failed to delete {oldest}: {e}")
+				return False
+        
 	# BACKUP DESTINATION
 	def backup_to_dst(self, src_path: str, dst_path: str) -> None:
 		try:
@@ -568,7 +563,7 @@ class SERVER:
 				# Ensure backup_list contains tuples of (src_path, rel_path, size)
 				file_size = sum(size for _, _, size in backup_list)
 			except ValueError as e:
-				print(f"Error while calculating total size to backup: {e}")
+				#print(f"Error while calculating total size to backup: {e}")
 				return False
 		else:
 			# Get file size
@@ -660,7 +655,7 @@ class SERVER:
 		if closest_timeframe_hours:  # Still can backup for today
 			return closest_timeframe_hours
 		else:
-			print('Can not backup for today anymore.')
+			#print('Can not backup for today anymore.')
 			return None
 
 	def get_next_day_name(self) -> str:
@@ -685,7 +680,7 @@ class SERVER:
 
 			# Check if new_array is valid
 			if new_array is None or not isinstance(new_array, str):
-				print(f'Invalid data for {day_name}')
+				#print(f'Invalid data for {day_name}')
 				return None
 
 			# Split the string and convert to integers, ignoring invalid values
@@ -697,8 +692,8 @@ class SERVER:
 		except ValueError as e:
 			current_function_name = inspect.currentframe().f_code.co_name
 
-			print(e)
-			print(f'Function: {current_function_name}')
+			#print(e)
+			#print(f'Function: {current_function_name}')
 			raise  # Raise the error instead of exiting
 
 	def get_database_value(self, section: str, option: str) -> str:
@@ -708,11 +703,11 @@ class SERVER:
 				raise FileNotFoundError(f"Config file '{self.CONF_LOCATION}' does not exist")
 
 			if not self.CONF.has_section(section):
-				print(f"Section '{section}' not found in configuration.")
+				#print(f"Section '{section}' not found in configuration.")
 				return None  # Or return a default value if needed
 
 			if not self.CONF.has_option(section, option):
-				print(f"Option '{option}' not found in section '{section}'.")
+				#print(f"Option '{option}' not found in section '{section}'.")
 				return None  # Or return a default value if needed
 
 			# Retrieve and convert the value
@@ -721,16 +716,16 @@ class SERVER:
 
 		except BrokenPipeError:  
 			# Handle broken pipe without crashing
-			print("Broken pipe occurred, but the app continues running.")
+			#print("Broken pipe occurred, but the app continues running.")
 			return None
 
 		except FileNotFoundError as e:
-			print(f"No connection to config file: {e}")
+			#print(f"No connection to config file: {e}")
 			return None
 
 		except Exception as e:
 			current_function_name = inspect.currentframe().f_code.co_name
-			print(f"Error in function {current_function_name}: {e}")
+			#print(f"Error in function {current_function_name}: {e}")
 			return None
 		
 	def safe_write_config(config, file_path):
@@ -840,11 +835,11 @@ class SERVER:
 		else:
 			estimated_time_str = 'Estimated Time Left: Calculating...'
 
-		print(f'Progress: {progress}/{total} ({percent:.0%}) - {bar} | '
-			f'Time Elapsed: {int(elapsed_time)}s | '
-			f'Velocity: {velocity:.2f} files/s | '
-			f'{estimated_time_str}', end='\r')
-		print()
+		# print(f'Progress: {progress}/{total} ({percent:.0%}) - {bar} | '
+		# 	f'Time Elapsed: {int(elapsed_time)}s | '
+		# 	f'Velocity: {velocity:.2f} files/s | '
+		# 	f'{estimated_time_str}', end='\r')
+		# print()
 
 	def copytree_with_progress(self, src: str, dst: str) -> None:
 		num_files = sum([len(files) for r, d, files in os.walk(src)])
@@ -858,7 +853,7 @@ class SERVER:
 				os.makedirs(dst_without_filename, exist_ok=True)
 				shutil.copy2(src, dst)
 
-				print(f"\033[92m[✓]\033[0m {src} -> {dst}")
+				#print(f"\033[92m[✓]\033[0m {src} -> {dst}")
 			elif os.path.isdir(src):
 				for root, dirs, files in os.walk(src):
 					for dir in dirs:
@@ -876,7 +871,7 @@ class SERVER:
 
 						progress += 1
 
-						print(f"\033[92m[✓]\033[0m {src_file} -> {dst_file}")
+						#print(f"\033[92m[✓]\033[0m {src_file} -> {dst_file}")
 						self.print_progress_bar(progress, num_files)
 		except Exception as e:
 			logging.error(f"copytree_with_progress: {e}")
