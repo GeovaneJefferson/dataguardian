@@ -307,18 +307,36 @@ class BackupWindow(Adw.ApplicationWindow):
         separator.set_margin_bottom(6)
         info_box.append(separator)
         
-        self.logs_button = Gtk.Button(label="Logs")
+        # Logs button with icon
+        logs_icon = Gtk.Image.new_from_icon_name("gnome-logs-symbolic")
+        logs_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        logs_box.set_halign(Gtk.Align.CENTER)
+        logs_box.set_valign(Gtk.Align.CENTER)
+        logs_icon.set_halign(Gtk.Align.CENTER)
+        logs_box.append(logs_icon)
+        logs_box.append(Gtk.Label(label="Logs"))
+
+        self.logs_button = Gtk.Button()
+        self.logs_button.set_child(logs_box)
         self.logs_button.set_sensitive(bool(self.has_connection))
         self.logs_button.set_hexpand(False)
         self.logs_button.set_valign(Gtk.Align.CENTER)
-        #self.logs_button.set_css_classes(["pill"])
-        self.logs_button.connect("clicked", self.show_backup_logs_dialog)  # Show logs, not the progress dialog
+        self.logs_button.connect("clicked", self.show_backup_logs_dialog)
         info_box.append(self.logs_button)
-        
+
         ##################################################################
         # Open location button
         ##################################################################
-        self.open_location_button = Gtk.Button(label="Open File Location")
+        # Open location button with icon
+        open_icon = Gtk.Image.new_from_icon_name("document-open-symbolic")
+        open_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        open_box.set_halign(Gtk.Align.CENTER)
+        open_box.set_valign(Gtk.Align.CENTER)
+        open_icon.set_halign(Gtk.Align.CENTER)
+        open_box.append(open_icon)
+        open_box.append(Gtk.Label(label="Open File Location"))
+        self.open_location_button = Gtk.Button()
+        self.open_location_button.set_child(open_box)
         self.open_location_button.set_sensitive(False)
         info_box.append(self.open_location_button)
 
@@ -338,20 +356,26 @@ class BackupWindow(Adw.ApplicationWindow):
         # self.preview_scrolled.set_child(self.preview_container)
         # self.current_preview_widget = None
 
-        # Find updates button
-        # After user selects a file, this button will be enabled,
-        # -this will be used to find updates for the selected file.
-        self.find_updates = Gtk.Button(label="Find File Versions")
+        # Find updates button with icon
+        find_icon = Gtk.Image.new_from_icon_name("edit-find-symbolic")
+        find_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        find_box.set_halign(Gtk.Align.CENTER)
+        find_box.set_valign(Gtk.Align.CENTER)
+        find_icon.set_halign(Gtk.Align.CENTER)
+        find_box.append(find_icon)
+        find_box.append(Gtk.Label(label="Find File Versions"))
+
+        self.find_updates = Gtk.Button()
+        self.find_updates.set_child(find_box)
         self.find_updates.set_tooltip_text(
             "Search for all available versions of the selected file, including the current and previous backups. "
             "Use this to restore or review earlier versions of your file.")
         self.find_updates.set_sensitive(False)
         self.find_updates.set_hexpand(False)
         self.find_updates.set_valign(Gtk.Align.CENTER)
-        #self.find_updates.set_css_classes(["suggested-action"])
         self.find_updates.connect("clicked", lambda b: self.find_update(self.selected_file_path))
         info_box.append(self.find_updates)
-        
+
         # Spacer to push the restore button to the bottom
         spacer = Gtk.Box()
         spacer.set_hexpand(False)
