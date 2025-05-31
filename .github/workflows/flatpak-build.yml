@@ -1,0 +1,42 @@
+name: Build and Publish Flatpak
+
+on:
+  push:
+    branches:
+      - main # Trigger on pushes to your main branch
+  workflow_dispatch: # Allows manual triggering of the workflow
+
+jobs:
+  build_and_publish:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout application code
+      uses: actions/checkout@v4
+
+    - name: Set up Flatpak and Flatpak Builder
+      uses: flatpak/flatpak-github-actions/setup@v6
+
+    - name: Configure GPG key
+      run: |
+        echo "${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}" | base64 --decode | gpg --batch --import
+        echo "${{ secrets.FLATPAK_GPG_PASSPHRASE }}" | gpg --batch --passphrase-fd 0 --pinentry-mode loopback --import-ownertrust
+      env:
+        FLATPAK_GPG_PRIVATE_KEY: ${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}
+        FLATPAK_GPG_PASSPHRASE: ${{ secrets.FLATPAK_GPG_PASSPHRASE }}
+
+    - name: Build Flatpak
+      run: |
+        flatpak-builder --force-clean --repo=flatpak-repo com.gnome.dataguardian.yaml
+        flatpak build-bundle flatpak-repo com.gnome.dataguardian stable com.gnome.dataguardian.flatpak
+        cp com.gnome.dataguardian.flatpak flatpak-repo/
+        flatpak build-update-repo flatpak-repo --generate-static-deltas --gpg-sign=${{ secrets.FLATPAK_GPG_FINGERPRINT }}
+      working-directory: ${{ github.workspace }}
+
+    - name: Deploy to GitHub Pages
+      uses: peaceiris/actions-gh-pages@v4
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./flatpak-repo # The directory containing your built Flatpak repo
+        publish_branch: gh-pages # Target branch within THIS repository
+        destination_dir: repo # Subdirectory within gh-pages where the repo will be placed
