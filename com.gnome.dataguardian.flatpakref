@@ -1,9 +1,0 @@
-[Flatpak Ref]
-Title=DataGuardian
-Name=dataguardian
-Branch=stable
-Url=https://geovanejefferson.github.io/dataguardian/repo/
-Homepage=https://github.com/GeovaneJefferson/dataguardian
-AppId=com.gnome.dataguardian
-SuggestRemoteName=dataguardian-github
-
