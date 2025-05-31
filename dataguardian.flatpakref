@@ -5,3 +5,4 @@ Branch=stable
 Url=https://geovanejefferson.github.io/dataguardian/repo
 IsRuntime=false
 RuntimeRepo=https://flathub.org/repo/flathub.flatpakrepo
+GPGKey=6E729A1526FBCE77F56DCAEB3C3086F788409036
