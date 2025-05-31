@@ -1,7 +1,0 @@
-[Flatpak Ref]
-Title=Data Guardian
-Name=com.gnome.dataguardian
-Branch=stable
-Url=https://your.flatpak.repo/url
-IsRuntime=false
-GPGKey=ba16a6d1d395e92214a512f419d94613b127b553e27efed392bc396a7ef73101
