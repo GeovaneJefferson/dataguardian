@@ -4,3 +4,4 @@ Name=com.gnome.dataguardian
 Branch=stable
 Url=https://geovanejefferson.github.io/dataguardian/repo
 IsRuntime=false
+RuntimeRepo=https://flathub.org/repo/flathub.flatpakrepo
