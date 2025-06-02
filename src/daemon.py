@@ -530,6 +530,8 @@ class Daemon:
                     # Use the provided date_folder instead of generating a new one
                     #date_folder = datetime.now().strftime("%d-%m-%Y/%H-%M")
                     backup_file_path = self.get_backup_file_path(file, date_folder)
+                    # Only create the folder here, just before copying
+                    os.makedirs(os.path.dirname(backup_file_path), exist_ok=True)
 
                 if not self.has_sufficient_space(file):  # Check if there is enough space in backup device
                     logging.warning("Not enough space, attempting to free space by deleting old backups...")
@@ -803,7 +805,8 @@ class Daemon:
                                     if not server.free_space_by_deleting_oldest_backups(file_size):
                                         logging.error("Unable to free enough space for backup.")
                                         continue  # Skip this file
-                                os.makedirs(os.path.join(self.updates_backup_dir, date_folder), exist_ok=True)
+                                # Moved to after a backup is confirmed
+                                # os.makedirs(os.path.join(self.updates_backup_dir, date_folder), exist_ok=True)
 
                             tasks.append(
                                 self.backup_file(

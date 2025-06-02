@@ -890,11 +890,14 @@ class SERVER:
 		
 	def setup_logging(self):
 		"""Sets up logging for file changes."""
-		MAX_LOG_SIZE: int = 50 * 1024 * 1024  # Example: 50 MB
+		MAX_LOG_SIZE: int = 20 * 1024 * 1024  # Example: 20 MB
 
 		# Check if the directory for the log file exists; if not, create it
 		log_dir = os.path.dirname(self.LOG_LOCATION)
+
 		os.makedirs(log_dir, exist_ok=True)  # Create the directory for the log file
+		# Ensure directory and file have correct permissions (user read/write/execute)
+		os.chmod(log_dir, 0o700)  # Only owner can read/write/execute
 
 		"""Check log file size and delete if it exceeds the limit."""
 		if os.path.exists(self.LOG_LOCATION):
@@ -911,12 +914,15 @@ class SERVER:
 		# timestamp = source["date"]
 		# human_readable_date = datetime.datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
 
-		logging.basicConfig(
-							filename=self.LOG_LOCATION,
-							level=logging.INFO,
-							format='%(asctime)s - %(message)s')
-		console_handler = logging.StreamHandler()
-		console_handler.setLevel(logging.INFO)
-		formatter = logging.Formatter('%(asctime)s - %(message)s')
-		console_handler.setFormatter(formatter)
-		logging.getLogger().addHandler(console_handler)
+		# logging.basicConfig(
+		# 					filename=self.LOG_LOCATION,
+		# 					level=logging.INFO,
+		# 					format='%(asctime)s - %(message)s')
+		# console_handler = logging.StreamHandler()
+		# console_handler.setLevel(logging.INFO)
+		# formatter = logging.Formatter('%(asctime)s - %(message)s')
+		# console_handler.setFormatter(formatter)
+		# logging.getLogger().addHandler(console_handler)
+
+if __name__ == "__main__":
+	pass

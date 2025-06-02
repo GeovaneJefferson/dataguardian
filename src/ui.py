@@ -11,7 +11,6 @@ except Exception:
     POPPLER_AVAILABLE = False
     print("Warning: Poppler not available — PDF preview disabled.")
 
-server = SERVER()
 
 class BackupWindow(Adw.ApplicationWindow):
     def __init__(self, **kwargs):
@@ -145,8 +144,8 @@ class BackupWindow(Adw.ApplicationWindow):
 
         #sidebar.append(overview_button)
         sidebar.append(self.devices_button)
+        sidebar.append(spacer)
         sidebar.append(self.restore_system_button)
-        #sidebar.append(spacer)
         sidebar.append(settings_button)
         main_content.append(sidebar)
 
@@ -213,24 +212,7 @@ class BackupWindow(Adw.ApplicationWindow):
         center_box.append(self.loading_label)
         self.loading_label.set_visible(False)  # Show at startup
         
-        # # Listbox for search results
-        # self.listbox = Gtk.ListBox()
-        # self.listbox.connect("row-selected", self.on_listbox_selection_changed)
-
-        # key_controller = Gtk.EventControllerKey()
-        # key_controller.connect("key-pressed", self.on_listbox_key_press)
-        # self.listbox.add_controller(key_controller)
-
-        # # Add a scrolled window for the listbox
-        # listbox_scrolled = Gtk.ScrolledWindow()
-        # listbox_scrolled.set_policy(
-        #     Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        # listbox_scrolled.set_hexpand(True)
-        # listbox_scrolled.set_vexpand(True)
-        # listbox_scrolled.set_child(self.listbox)
-
-        # center_box.append(self.listbox)
-
+        # Listbox for search results
         self.listbox = Gtk.ListBox()
         self.listbox.connect("row-selected", self.on_listbox_selection_changed)
 
@@ -238,9 +220,26 @@ class BackupWindow(Adw.ApplicationWindow):
         key_controller.connect("key-pressed", self.on_listbox_key_press)
         self.listbox.add_controller(key_controller)
         center_box.append(self.listbox)
-
         main_content.append(center_box)
 
+        # # Create the ListBox
+        # self.listbox = Gtk.ListBox()
+        # self.listbox.connect("row-selected", self.on_listbox_selection_changed)
+
+        # key_controller = Gtk.EventControllerKey()
+        # key_controller.connect("key-pressed", self.on_listbox_key_press)
+        # self.listbox.add_controller(key_controller)
+
+        # # Create a ScrolledWindow and add the ListBox to it
+        # self.scrolled_window = Gtk.ScrolledWindow()
+        # self.scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)  # Both scrollbars
+        # self.scrolled_window.set_propagate_natural_width(True)  # Allow horizontal expansion
+
+        # # Add the ListBox to the ScrolledWindow
+        # self.scrolled_window.set_child(self.listbox)
+
+        # # Add the ScrolledWindow to your layout (e.g., main box or window)
+        # main_content.append(self.scrolled_window)  # Or pack_start/add, depending on your layout
 
         # Right panel
         info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -466,6 +465,7 @@ class BackupWindow(Adw.ApplicationWindow):
 		# Startup actions
 		##########################################################################
         self.add_found_devices_to_devices_popover_box()  # Add found devices to the popover
+        self.populate_latest_backups()  # At startup populate with latest backups results
 
     ##########################################################################
     # BACKUP
@@ -578,6 +578,70 @@ class BackupWindow(Adw.ApplicationWindow):
             #self.clear_preview()
             self.selected_file_path = None
 
+    def populate_latest_backups(self):
+        # Show latest backup files on startup
+        latest_files = self.get_latest_backup_files()
+        if latest_files:
+            print("Latest backup files:")
+            for f in latest_files:
+                print(f)
+            # Optionally, populate your listbox or UI with these files
+            self.populate_results([{"name": os.path.basename(f), "path": f, "date": os.path.getmtime(f)} for f in latest_files])
+        else:
+            print("No backup files found.")
+
+
+    def get_latest_backup_files(self):
+        base_backup_folder = server.main_backup_folder()
+        backup_root = server.backup_folder_name()
+
+        if not os.path.exists(backup_root):
+            return []
+        
+        # List all date folders
+        date_folders = [folder for folder in os.listdir(backup_root)
+                            if os.path.isdir(os.path.join(backup_root, folder))]
+        base_folder_name = os.path.basename(base_backup_folder)
+        if base_folder_name in date_folders:
+            date_folders.remove(base_folder_name)
+            date_folders.sort(
+                key=lambda folder: datetime.strptime(folder, "%d-%m-%Y"),
+                reverse=True
+            )
+
+        if not date_folders:
+            return []
+
+        # Get latest date folder
+        latest_date = date_folders[0]  # e.g.: 01-01-20
+        latest_date_path = os.path.join(backup_root, latest_date)
+
+        # Find the latest time folder inside the latest date
+        time_folders = [
+            t for t in os.listdir(latest_date_path)
+            if os.path.isdir(os.path.join(latest_date_path, t))
+        ]
+
+        if not time_folders:
+            return []
+
+        try:
+            time_folders.sort(key=lambda t: datetime.strptime(t, "%H-%M"), reverse=True)
+        except Exception:
+            time_folders.sort(reverse=True)
+
+        # Get latest time folder
+        latest_time = time_folders[0]
+        latest_backup_path = os.path.join(latest_date_path, latest_time)
+        print(latest_backup_path)
+
+        # List all files in the latest backup folder
+        backup_files = []
+        for root, dirs, files in os.walk(latest_backup_path):
+            for file in files:
+                backup_files.append(os.path.join(root, file))
+        return backup_files
+    
     # def clear_preview(self):
     #     if self.current_preview_widget:
     #         self.preview_container.remove(self.current_preview_widget)
@@ -727,7 +791,7 @@ class BackupWindow(Adw.ApplicationWindow):
             if hasattr(self, "loading_label"):
                 self.loading_label.set_visible(False)
             # Show latest backup files from latest backup date
-            self.populate_results([])
+            self.populate_latest_backups()
             
     def perform_search(self, query):
         """Perform the search and update the results."""
@@ -823,7 +887,7 @@ class BackupWindow(Adw.ApplicationWindow):
             date_label = Gtk.Label(label=backup_date, xalign=0)
             date_label.set_hexpand(False)
             date_label.set_halign(Gtk.Align.START)
-            grid.attach(date_label, 3, 0, 1, 1)
+            #grid.attach(date_label, 3, 0, 1, 1)
 
             # Placeholder for last backup (optional)
             # last_backup_label = Gtk.Label(label="", xalign=0)
@@ -1279,7 +1343,7 @@ class BackupWindow(Adw.ApplicationWindow):
         restore_btn = Gtk.Button(label="Restore")
         restore_btn.set_css_classes(["suggested-action"])
         restore_btn.set_halign(Gtk.Align.START)
-        header.pack_end(restore_btn)
+        header.pack_start(restore_btn)
         win.set_titlebar(header)
 
         # Stack for pages
@@ -1600,7 +1664,7 @@ class BackupWindow(Adw.ApplicationWindow):
 
                     if kind == "app":
                         package_manager = check_package_manager()
-                        TEST_MODE = False  # Set to True to simulate, False for real install
+                        TEST_MODE = True  # Set to True to simulate, False for real install
                         if package_manager == 'deb':
                             cmd = ["dpkg", "-i", pkg_path]
                         elif package_manager == 'rpm':
@@ -1632,19 +1696,19 @@ class BackupWindow(Adw.ApplicationWindow):
                     elif kind == "file":
                         restore_path = task[2]
                         is_folder = task[3]
-                        TEST_MODE = False  # Set to True to simulate, False for real restore
+                        TEST_MODE = True  # Set to True to simulate, False for real restore
                         try:
                             if is_folder:
                                 if TEST_MODE:
-                                    GLib.idle_add(append_terminal, f"[TEST MODE] Would restore folder: {label}")
+                                    GLib.idle_add(append_terminal, f"\n[TEST MODE] Would restore folder: {label}")
                                 else:
                                     restore_folder(restore_path, server.HOME_USER)
                                     GLib.idle_add(append_terminal, f"Restored folder: {label}")
                             else:
                                 dest_item = os.path.join(server.HOME_USER, os.path.basename(restore_path))
                                 if TEST_MODE:
-                                    GLib.idle_add(progress_label.set_text, f"[TEST MODE] Restoring: {os.path.basename(restore_path)}")
-                                    GLib.idle_add(append_terminal, f"[TEST MODE] Would restore file: {restore_path} → {dest_item}")
+                                    GLib.idle_add(progress_label.set_text, f"\n[TEST MODE] Restoring: {os.path.basename(restore_path)}")
+                                    GLib.idle_add(append_terminal, f"\n[TEST MODE] Would restore file: {restore_path} → {dest_item}")
                                 else:
                                     shutil.copy2(restore_path, dest_item)
                                     GLib.idle_add(progress_label.set_text, f"Restoring: {os.path.basename(restore_path)}")
@@ -1654,11 +1718,10 @@ class BackupWindow(Adw.ApplicationWindow):
                     elif kind == "flatpak":
                         flatpak_ref = label
                         try:
-                            GLib.idle_add(progress_label.set_text, f"Installing Flatpak: {flatpak_ref}")
-                            GLib.idle_add(append_terminal, f"Installing Flatpak: {flatpak_ref}")
-                            print(f"Installing Flatpak: {flatpak_ref}")
+                            GLib.idle_add(progress_label.set_text, f"\nInstalling Flatpak: {flatpak_ref}")
+                            GLib.idle_add(append_terminal, f"\nInstalling Flatpak: {flatpak_ref}")
                             # --- TEST MODE: set to True to simulate, False to really install ---
-                            TEST_MODE = False
+                            TEST_MODE = True
 
                             if TEST_MODE:
                                 # Simulate with echo for testing
@@ -2080,10 +2143,11 @@ class BackupApp(Adw.Application):
 
 
 def main():
-    server.setup_logging()
+    #server.setup_logging()
     app = BackupApp()
     return app.run(None)
 
 
 if __name__ == "__main__":
+    server = SERVER()  # <-- Instantiate first!
     main()
