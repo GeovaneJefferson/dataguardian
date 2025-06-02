@@ -914,15 +914,15 @@ class SERVER:
 		# timestamp = source["date"]
 		# human_readable_date = datetime.datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
 
-		# logging.basicConfig(
-		# 					filename=self.LOG_LOCATION,
-		# 					level=logging.INFO,
-		# 					format='%(asctime)s - %(message)s')
-		# console_handler = logging.StreamHandler()
-		# console_handler.setLevel(logging.INFO)
-		# formatter = logging.Formatter('%(asctime)s - %(message)s')
-		# console_handler.setFormatter(formatter)
-		# logging.getLogger().addHandler(console_handler)
+		logging.basicConfig(
+							filename=self.LOG_LOCATION,
+							level=logging.INFO,
+							format='%(asctime)s - %(message)s')
+		console_handler = logging.StreamHandler()
+		console_handler.setLevel(logging.INFO)
+		formatter = logging.Formatter('%(asctime)s - %(message)s')
+		console_handler.setFormatter(formatter)
+		logging.getLogger().addHandler(console_handler)
 
 if __name__ == "__main__":
 	pass
