@@ -11,8 +11,6 @@ except Exception:
     POPPLER_AVAILABLE = False
     print("Warning: Poppler not available — PDF preview disabled.")
 
-server = SERVER()  # <-- Instantiate first!
-
 
 class BackupWindow(Adw.ApplicationWindow):
     def __init__(self, **kwargs):
@@ -2137,12 +2135,10 @@ class SettingsWindow(Adw.PreferencesWindow):
 class BackupApp(Adw.Application):
     def __init__(self):
         super().__init__(application_id=server.ID,
-                         flags=Gio.ApplicationFlags.FLAGS_NONE)
-
+                        flags=Gio.ApplicationFlags.FLAGS_NONE)
     def do_activate(self):
         win = BackupWindow(application=self)
         win.present()
-
 
 def main():
     # server.setup_logging()
@@ -2151,4 +2147,5 @@ def main():
 
 
 if __name__ == "__main__":
+    server = SERVER()  # <-- Instantiate first!
     main()

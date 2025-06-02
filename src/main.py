@@ -5,9 +5,8 @@ from ui import BackupWindow
 
 class BackupApp(Adw.Application):   
     def __init__(self):
-        super().__init__(application_id=SERVER().ID,
+        super().__init__(application_id=server.ID,
                         flags=Gio.ApplicationFlags.FLAGS_NONE)
-
     def do_activate(self):
         win = BackupWindow(application=self)
         win.present()
@@ -19,5 +18,6 @@ def main():
     
 
 if __name__ == "__main__":
+    server = SERVER()  # <-- Instantiate first!
     main()
 
