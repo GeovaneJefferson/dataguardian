@@ -1,6 +1,7 @@
 import getpass
 import os
 import pathlib
+import itertools
 import subprocess as sub
 import configparser
 import shutil
@@ -8,40 +9,41 @@ import time
 import sys
 import signal
 import asyncio
-import threading
-from threading import Timer
-import multiprocessing
-import locale
-import sqlite3
+#import threading
+#from threading import Timer
+#import multiprocessing
+#import locale
+#import sqlite3
 import logging
-import traceback
+#import traceback
 import socket
 import errno
 import setproctitle
 import csv
 import random
-import platform
+#import platform
 import inspect
 import gi
 import json
-import fnmatch
+#import fnmatch
 import hashlib
 import stat
 import psutil
 import fcntl
 import mimetypes
 import cairo
+import tempfile
+
 
 from datetime import datetime, timedelta
 from pathlib import Path
-import concurrent.futures
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+#import concurrent.futures
+#from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 gi.require_version('Gio', '2.0')
 from gi.repository import Gtk, Adw, Gio, GLib, Gdk, GdkPixbuf, Pango
-
 
 # Ignore SIGPIPE signal, so that the app doesn't crash
 signal.signal(signal.SIGPIPE, signal.SIG_IGN)
@@ -541,45 +543,24 @@ class SERVER:
 			self, 
 			file_path: str=None, 
 			backup_list: list=None) -> bool:
-		"""
-		Checks if the backup device has enough space to back up the files.
-
-		Args:
-			backup_device_path (str): Path to the backup device/directory.
-			backup_list (list): List of files or directories to be backed up (each item is a tuple: (src_path, rel_path, size)).
-
-		Returns:
-			bool: True if there is enough space, False otherwise.
-		"""
-		# Threshold for available space (leave at least 2 GB free)
 		threshold_bytes = 2 * 1024 * 1024 * 1024  # 2 GB
-
-		# Get available space on the backup device
 		total, used, device_free_size = shutil.disk_usage(self.DRIVER_LOCATION)
 
 		if backup_list:
-			# Calculate total size of the files to be backed up
 			try:
-				# Ensure backup_list contains tuples of (src_path, rel_path, size)
-				file_size = sum(size for _, _, size in backup_list)
-			except ValueError as e:
-				#print(f"Error while calculating total size to backup: {e}")
+				# Cast sizes to int just in case
+				file_size = sum(int(size) for _, _, size in backup_list)
+			except Exception as e:
 				return False
 		else:
-			# Get file size
 			file_size = self.get_item_size(file_path)
-
-		if device_free_size > (file_size + threshold_bytes):
-			return True
-		return
-
-		# # Check if there is enough space on the backup device
-		# if free > (total_size_to_backup + threshold_bytes):
-		# 	# print(f"\033[92m[✓]\033[0m Enough space for backup!")
-		# 	return True
-
-		# print(f"\033[91m[X]\033[0m Not enough space on the backup device. Required: {total_size_to_backup} bytes, Available: {free} bytes")
-		# return False
+			if not isinstance(file_size, int):
+				try:
+					file_size = int(file_size)
+				except Exception as e:
+					return False
+		# logging.debug(f"Checking space: device_free_size={device_free_size}, file_size={file_size}, threshold_bytes={threshold_bytes}")
+		return device_free_size > (file_size + threshold_bytes)
 
 	####################################################################
 	# Packages managers
@@ -613,7 +594,7 @@ class SERVER:
 					valid_dates.append(date)
 				except ValueError:
 					# Skip invalid folder names
-					logging.warning(f"Invalid folder name skipped: {date}")
+					continue
 		return sorted(
 			valid_dates,
 			key=lambda d: datetime.strptime(d, '%d-%m-%Y'),
@@ -631,33 +612,6 @@ class SERVER:
 	def flatpak_local_folder(self) -> str:
 		return f"{self.DRIVER_LOCATION}/{self.APP_NAME_CLOSE_LOWER}/flatpak/share"
 
-	################################################################################
-	# SHEDULE
-	def get_closest_timeframe(self, day_name: str) -> list:
-		closest_timeframe_hours: list = []
-
-		timeframe_list: list = self.get_current_temp_timeframe(
-			day_name=day_name)
-
-		for _, hour in enumerate(timeframe_list):
-			target_time = datetime(
-					year = datetime.now().year,
-					month = datetime.now().month,
-					day = datetime.now().day,
-					hour = hour,
-					minute = 0)
-			# Positive values mean timers after current time
-			time_diff: int = target_time.hour - datetime.now().hour
-			if time_diff > 0 :
-				closest_timeframe_hours.append(hour)
-
-		closest_timeframe_hours.sort()
-		if closest_timeframe_hours:  # Still can backup for today
-			return closest_timeframe_hours
-		else:
-			#print('Can not backup for today anymore.')
-			return None
-
 	def get_next_day_name(self) -> str:
 		today = datetime.now()
 		next_day = today + timedelta(days=1)
@@ -670,31 +624,6 @@ class SERVER:
 	# 		section=self.get_next_day_name(),  # Next day string
 	# 		option='new_array')
 	# 	return next_day_name_timeframe
-
-	def get_current_temp_timeframe(self, day_name: str) -> list:
-		try:
-			new_array = self.get_database_value(
-				section=day_name,
-				option='new_array'
-			)
-
-			# Check if new_array is valid
-			if new_array is None or not isinstance(new_array, str):
-				#print(f'Invalid data for {day_name}')
-				return None
-
-			# Split the string and convert to integers, ignoring invalid values
-			new_array = [int(num) for num in new_array.split(',') if num.isdigit()]
-
-			return new_array
-		except (TypeError, AttributeError):
-			return None
-		except ValueError as e:
-			current_function_name = inspect.currentframe().f_code.co_name
-
-			#print(e)
-			#print(f'Function: {current_function_name}')
-			raise  # Raise the error instead of exiting
 
 	def get_database_value(self, section: str, option: str) -> str:
 		try:
@@ -923,6 +852,7 @@ class SERVER:
 		formatter = logging.Formatter('%(asctime)s - %(message)s')
 		console_handler.setFormatter(formatter)
 		logging.getLogger().addHandler(console_handler)
+
 
 if __name__ == "__main__":
 	pass

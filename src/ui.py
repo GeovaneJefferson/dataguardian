@@ -1102,7 +1102,7 @@ class BackupWindow(Adw.ApplicationWindow):
         restore_button = Gtk.Button(label="Restore File")
         restore_button.set_css_classes(["suggested-action"])
         restore_button.set_sensitive(False)
-        header.pack_start(restore_button)
+        header.pack_end(restore_button)
 
         open_file_location = Gtk.Button(label="Open File Location")
         # open_file_location.set_css_classes(["suggested-action"])
