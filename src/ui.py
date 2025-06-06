@@ -2025,40 +2025,22 @@ class SettingsWindow(Adw.PreferencesWindow):
     def stop_daemon(self):
         """Stop the daemon by reading its PID."""
         if os.path.exists(server.DAEMON_PID_LOCATION):
-            pid_to_stop = 0
+            with open(server.DAEMON_PID_LOCATION, 'r') as f:
+                pid = int(f.read())
+
             try:
-                with open(server.DAEMON_PID_LOCATION, 'r') as f:
-                    pid_to_stop = int(f.read().strip())
-            except (ValueError, IOError) as e:
-                print(f"Error reading PID file: {e}. Removing stale file.")
+                os.kill(pid, signal.SIGTERM)  # Send termination signal
+                os.waitpid(pid, 0)  # Wait for the process to terminate
                 os.remove(server.DAEMON_PID_LOCATION)
-                return
-    
-            # --- SAFETY CHECK ---
-            # Do not try to stop the current process
-            if pid_to_stop == os.getpid():
-                print(f"Error: PID {pid_to_stop} belongs to the UI. Not stopping.")
-                logging.warning(f"Attempted to stop self (PID: {pid_to_stop}). Ignoring.")
-                # It's also a good idea to remove the incorrect PID file
-                os.remove(server.DAEMON_PID_LOCATION)
-                return
-    
-            try:
-                os.kill(pid_to_stop, signal.SIGTERM)  # Send termination signal
-                os.waitpid(pid_to_stop, 0)  # Wait for the process to terminate
-                os.remove(server.DAEMON_PID_LOCATION)
-                print(f"Daemon with PID {pid_to_stop} stopped.")
-                logging.info(f"Daemon with PID {pid_to_stop} stopped.")
+                print(f"Daemon with PID {pid} stopped.")
             except OSError as e:
-                print(f"Failed to stop daemon with PID {pid_to_stop}. Error: {e}")
-                logging.error(f"Failed to stop daemon with PID {pid_to_stop}. Error: {e}")
-                # If the process doesn't exist, it's a stale PID.
+                print(f"Failed to stop daemon with PID {pid}. Error: {e}")
                 if e.errno == errno.ESRCH:
-                    print(f"Daemon with PID {pid_to_stop} not found. Removing stale PID file.")
+                    print(f"Daemon with PID {pid} not found. Removing stale PID file.")
                     os.remove(server.DAEMON_PID_LOCATION)
         else:
             print("Daemon is not running.")
-    
+
     def remove_autostart_entry(self):
         if os.path.exists(server.autostart_file):
             os.remove(server.autostart_file)
