@@ -70,7 +70,6 @@ class BackupWindow(Adw.ApplicationWindow):
         # main_content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         # toolbar_view.set_content(main_content)
 
-
         # Adwaita 1.4-
         # Create the HeaderBar.
         header = Adw.HeaderBar()
@@ -237,10 +236,12 @@ class BackupWindow(Adw.ApplicationWindow):
         # self.scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)  # Both scrollbars
         # self.scrolled_window.set_propagate_natural_width(True)  # Allow horizontal expansion
 
-        # # Add the ListBox to the ScrolledWindow
+        # Add the ListBox to the ScrolledWindow
         # self.scrolled_window.set_child(self.listbox)
 
-        # # Add the ScrolledWindow to your layout (e.g., main box or window)
+        # center_box.append(self.listbox)
+
+        # Add the ScrolledWindow to your layout (e.g., main box or window)
         # main_content.append(self.scrolled_window)  # Or pack_start/add, depending on your layout
 
         # Right panel
@@ -584,7 +585,6 @@ class BackupWindow(Adw.ApplicationWindow):
         # Show latest backup files on startup
         latest_files = self.get_latest_backup_files()
         if latest_files:
-            print("Latest backup files:")
             for f in latest_files:
                 print(f)
             # Optionally, populate your listbox or UI with these files
@@ -635,7 +635,6 @@ class BackupWindow(Adw.ApplicationWindow):
         # Get latest time folder
         latest_time = time_folders[0]
         latest_backup_path = os.path.join(latest_date_path, latest_time)
-        print(latest_backup_path)
 
         # List all files in the latest backup folder
         backup_files = []
@@ -866,7 +865,7 @@ class BackupWindow(Adw.ApplicationWindow):
             grid.attach(icon, 0, 0, 1, 1)
 
             # Name
-            shorted_file_path = file_info["path"].replace(self.documents_path, "").lstrip(os.sep)
+            shorted_file_path = file_info["path"].replace(server.backup_folder_name(), "").lstrip(os.sep)
             name_label = Gtk.Label(label=shorted_file_path, xalign=0)
             name_label.set_hexpand(True)
             name_label.set_halign(Gtk.Align.START)
