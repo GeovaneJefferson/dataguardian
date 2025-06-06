@@ -3,7 +3,7 @@ from has_driver_connection import has_driver_connection
 from server import *
 
 WAIT_TIME = 5  # Minutes between backup checks
-COPY_CONCURRENCY = 10  # Max parallel copy tasks
+COPY_CONCURRENCY = 4  # Max parallel copy tasks
 
 
 def compute_folder_metadata(folder_path, excluded_dirs=None, excluded_exts=None):
@@ -44,7 +44,7 @@ class Daemon:
         self.executor = ProcessPoolExecutor(max_workers=COPY_CONCURRENCY)
         self.copy_semaphore = asyncio.Semaphore(COPY_CONCURRENCY)
 
-        self.excluded_dirs = {'__pycache__'}
+        self.excluded_dirs = {'__pycache__', 'snap'}
         self.excluded_exts = {'.crdownload', '.part', '.tmp'}
 
         self.ignored_folders = set(os.path.abspath(p) for p in server.load_ignored_folders_from_config())
@@ -57,10 +57,14 @@ class Daemon:
         self.should_exit = False
 
     def signal_handler(self, signum, frame):
-        logging.info(f"Received signal {signum}, stopping daemon...")
-        self.suspend_flag = True
-        self.should_exit = True
-
+        if signum == signal.SIGTSTP:
+            logging.info(f"Received SIGTSTP (suspend), pausing daemon...")
+            self.suspend_flag = True
+        else:
+            logging.info(f"Received termination signal {signum}, stopping daemon...")
+            self.suspend_flag = True
+            self.should_exit = True
+    
     def resume_handler(self, signum, frame):
         logging.info(f"Received resume signal {signum}, resuming operations.")
         self.suspend_flag = False
@@ -82,7 +86,6 @@ class Daemon:
         try:
             current_stat = os.stat(src)
         except FileNotFoundError:
-            # logging.warning(f"File not found: {src}")
             return False
 
         backup_dates = server.has_backup_dates_to_compare()
@@ -135,7 +138,6 @@ class Daemon:
         return False
 
     async def copy_file(self, src: str, dst: str):
-        """Copy a file asynchronously while respecting concurrency limits."""
         async with self.copy_semaphore:
             try:
                 if not server.has_backup_device_enough_space(src):
@@ -143,10 +145,25 @@ class Daemon:
                     return
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
                 loop = asyncio.get_event_loop()
-                await loop.run_in_executor(self.executor, shutil.copy2, src, dst)
+
+                tmp_dst = dst + ".tmp"
+
+                # Copy file in executor
+                await loop.run_in_executor(self.executor, shutil.copy2, src, tmp_dst)
+
+                # Flush file data to disk
+                with open(tmp_dst, 'rb') as f:
+                    os.fsync(f.fileno())
+
+                os.replace(tmp_dst, dst)
                 logging.info(f"Backed up: {src} -> {dst}")
             except Exception as e:
                 logging.error(f"Error copying {src} -> {dst}: {e}")
+                try:
+                    if os.path.exists(tmp_dst):
+                        os.remove(tmp_dst)
+                except Exception:
+                    pass
 
     def load_folder_metadata(self, top_rel_path):
         meta_path = os.path.join(self.main_backup_dir, top_rel_path, '.backup_meta.json')
@@ -154,14 +171,9 @@ class Daemon:
             try:
                 with open(meta_path, 'r') as f:
                     data = json.load(f)
-                # logging.info(f"Loaded metadata for {top_rel_path}: {list(data.keys())}")
                 return data
-            except Exception as e:
+            except Exception:
                 pass
-                # logging.warning(f"Failed to load metadata from {meta_path}: {e}")
-        else:
-            # logging.info(f"No metadata file found at {meta_path}")
-            pass
         return {}
     
     def save_folder_metadata(self, top_rel_path, metadata):
@@ -169,29 +181,23 @@ class Daemon:
         try:
             os.makedirs(os.path.dirname(meta_path), exist_ok=True)
 
-            # Write to a temporary file first
             with tempfile.NamedTemporaryFile('w', delete=False, dir=os.path.dirname(meta_path)) as tmpf:
                 json.dump(metadata, tmpf)
                 temp_path = tmpf.name
 
-            # Atomically replace the metadata file
             os.replace(temp_path, meta_path)
-        except Exception as e:
-            # logging.error(f"Failed to save metadata atomically: {e}")
+        except Exception:
             pass
         
     def folder_needs_check(self, rel_folder, current_meta, cached_meta):
         cached = cached_meta.get(rel_folder)
         if cached is None:
-            # logging.info(f"Metadata missing for folder '{rel_folder}', needs check")
             return True
         for key in ('total_files', 'total_size', 'latest_mtime'):
             cached_val = cached.get(key)
             current_val = current_meta.get(key)
             if cached_val != current_val:
-                # logging.info(f"Metadata mismatch for '{rel_folder}': {key} cached={cached_val} current={current_val}")
                 return True
-        # logging.info(f"Folder '{rel_folder}' unchanged in metadata")
         return False
     
     async def scan_and_backup(self):
@@ -203,7 +209,6 @@ class Daemon:
     
         logging.info("Starting scan and backup...")
 
-        # Write an "interrupted" flag at start of backup
         with open(server.INTERRUPTED_MAIN, 'w') as f:
             f.write("interrupted")
         
@@ -216,23 +221,16 @@ class Daemon:
     
             # Skip ignored folders
             if any(os.path.commonpath([src_path, ign]) == ign for ign in self.ignored_folders):
-                logging.info(f"Skipping ignored folder: {src_path}")
                 continue
     
-            logging.info(f" Scanning folder :{src_path}")
-    
-            # Load metadata for the top-level folder
             cached_meta = self.load_folder_metadata(top_level_rel_path)
             new_meta = {}
     
             for root, dirs, files in os.walk(src_path):
-                # Filter excluded directories
                 dirs[:] = [d for d in dirs if not d.startswith('.') and d not in self.excluded_dirs]
     
-                # Key relative to top-level folder
                 subfolder_key = os.path.relpath(root, src_path).replace("\\", "/")
     
-                # Compute current metadata for this subfolder
                 current_meta = compute_folder_metadata(
                     root,
                     excluded_dirs=self.excluded_dirs,
@@ -240,11 +238,8 @@ class Daemon:
                 )
                 new_meta[subfolder_key] = current_meta
     
-                # Only walk into subfolder if folder metadata changed
                 if not self.folder_needs_check(subfolder_key, current_meta, cached_meta):
-                    continue  # Skip scanning files in this subfolder
-    
-                logging.info(f"     Scanning subfolder: {root}")
+                    continue
     
                 for f in files:
                     if f.startswith('.') or any(f.endswith(ext) for ext in self.excluded_exts):
@@ -259,7 +254,6 @@ class Daemon:
                         session_backup_path = os.path.join(session_backup_dir, frel)
                         tasks.append(self.copy_file(fsrc, session_backup_path))
     
-            # Save updated metadata for the entire top-level folder
             self.save_folder_metadata(top_level_rel_path, new_meta)
     
         if tasks:
@@ -267,46 +261,72 @@ class Daemon:
             server.update_recent_backup_information()
             logging.info("Backup session complete.")
     
-        # Remove "interrupted" flag at the end of backup
         if os.path.exists(server.INTERRUPTED_MAIN):
             os.remove(server.INTERRUPTED_MAIN)
         
     async def resume_from_interruption(self):
-        """Resume backup if previous session was interrupted."""
         if os.path.exists(server.INTERRUPTED_MAIN):
             logging.info("Resuming from previous interrupted backup session...")
             await self.scan_and_backup()
             os.remove(server.INTERRUPTED_MAIN)
 
     async def run(self):
-        """Main daemon loop."""
         await self.resume_from_interruption()
+        shutdown_event = asyncio.Event()
+
+        def stop_loop(signum, frame):
+            self.signal_handler(signum, frame)
+            shutdown_event.set()
+
+        signal.signal(signal.SIGTERM, stop_loop)
+        signal.signal(signal.SIGINT, stop_loop)
+        signal.signal(signal.SIGTSTP, self.signal_handler)  # Suspend (Ctrl+Z)
+        signal.signal(signal.SIGCONT, self.resume_handler)  # Resume
+
         while not self.should_exit:
-            if os.path.exists(server.DAEMON_PID_LOCATION):
-                if has_driver_connection():
-                    await self.scan_and_backup()
-                else:
-                    logging.info("Backup device not connected.")
-            else:
+            if self.suspend_flag:
+                logging.info("Daemon suspended... sleeping.")
+                await asyncio.sleep(5)
+                continue
+
+            if not os.path.exists(server.DAEMON_PID_LOCATION):
                 self.signal_handler(signal.SIGTERM, None)
                 break
 
-            logging.info("Waiting for next backup cycle...")
-            await asyncio.sleep(WAIT_TIME * 60)
+            if has_driver_connection():
+                await self.scan_and_backup()
+
+            total_wait = WAIT_TIME * 60
+            interval = 1
+            elapsed = 0
+            
+            while elapsed < total_wait and not self.should_exit:
+                try:
+                    await asyncio.wait_for(shutdown_event.wait(), timeout=interval)
+                    break
+                except asyncio.TimeoutError:
+                    elapsed += interval
 
 
 if __name__ == "__main__":
+    LOG_FILE_PATH = os.path.expanduser("~/logging.log")
+    os.makedirs(os.path.dirname(LOG_FILE_PATH), exist_ok=True)
+    
+    formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    
+    file_handler = logging.FileHandler(LOG_FILE_PATH)
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+    
     server = SERVER()
-    server.setup_logging()
-    logging.getLogger().setLevel(logging.INFO)
-
     daemon = Daemon()
-
     setproctitle.setproctitle(f'{server.APP_NAME} - daemon')
-
-    signal.signal(signal.SIGTERM, daemon.signal_handler)
-    signal.signal(signal.SIGINT, daemon.signal_handler)
-    signal.signal(signal.SIGCONT, daemon.resume_handler)
 
     try:
         asyncio.run(daemon.run())
@@ -314,4 +334,3 @@ if __name__ == "__main__":
         logging.error(f"Daemon exception: {e}")
     finally:
         logging.info("Daemon shutting down.")
-
