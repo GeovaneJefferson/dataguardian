@@ -11,7 +11,6 @@ except Exception:
     POPPLER_AVAILABLE = False
     print("Warning: Poppler not available — PDF preview disabled.")
 
-server = SERVER()  # <-- Instantiate first!
 
 class BackupWindow(Adw.ApplicationWindow):
     def __init__(self, **kwargs):
@@ -2166,4 +2165,20 @@ def main():
 
 
 if __name__ == "__main__":
+    LOG_FILE_PATH = os.path.expanduser("~/logging_ui.log")
+    os.makedirs(os.path.dirname(LOG_FILE_PATH), exist_ok=True)
+    
+    formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    
+    file_handler = logging.FileHandler(LOG_FILE_PATH)
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
+    server = SERVER()  # <-- Instantiate first!
     main()
