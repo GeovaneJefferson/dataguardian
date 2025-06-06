@@ -309,7 +309,7 @@ class Daemon:
 
 
 if __name__ == "__main__":
-    LOG_FILE_PATH = os.path.expanduser("~/logging.log")
+    LOG_FILE_PATH = os.path.expanduser("~/.logging.log")
     os.makedirs(os.path.dirname(LOG_FILE_PATH), exist_ok=True)
     
     formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
