@@ -36,6 +36,14 @@ def compute_folder_metadata(folder_path, excluded_dirs=None, excluded_exts=None)
         "latest_mtime": latest_mtime
     }
 
+def send_to_ui(message: str):
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.connect(server.SOCKET_PATH)
+        sock.sendall(message.encode("utf-8"))
+        sock.close()
+    except Exception:
+        pass  # UI might not be running, ignore
 
 class Daemon:
     def __init__(self):
@@ -137,26 +145,107 @@ class Daemon:
 
         return False
 
-    async def copy_file(self, src: str, dst: str):
+    async def copy_file(self, src: str, dst: str, rel_path: str):
         async with self.copy_semaphore:
+            file_id = rel_path  # Use rel_path as a unique ID for the UI
+            filename = os.path.basename(src)
+            total_size_bytes = 0
+            human_readable_size = "N/A"
+
             try:
-                if not server.has_backup_device_enough_space(src):
-                    logging.warning(f"Not enough space to backup: {src}")
+                total_size_bytes = os.path.getsize(src)
+                human_readable_size = server.get_item_size(src, True)
+            except OSError as e:
+                logging.error(f"Cannot get size of {src}: {e}")
+                error_msg = {"id": file_id, "filename": filename, "size": human_readable_size, "eta": "error", "progress": 0.0, "error": f"Cannot access file: {e}"}
+                send_to_ui(json.dumps(error_msg))
+                return
+
+            # Check for sufficient disk space
+            threshold_bytes = 2 * 1024 * 1024 * 1024  # 2 GB
+            try:
+                _, _, device_free_size = shutil.disk_usage(server.DRIVER_LOCATION)
+                if device_free_size <= (total_size_bytes + threshold_bytes):
+                    logging.warning(f"Not enough space to backup: {src}. Required: {total_size_bytes}, Free: {device_free_size}")
+                    error_msg = {"id": file_id, "filename": filename, "size": human_readable_size, "eta": "no space", "progress": 0.0, "error": "Not enough disk space"}
+                    send_to_ui(json.dumps(error_msg))
                     return
+            except Exception as e:
+                logging.error(f"Error checking disk space: {e}")
+                error_msg = {"id": file_id, "filename": filename, "size": human_readable_size, "eta": "error", "progress": 0.0, "error": f"Disk check failed: {e}"}
+                send_to_ui(json.dumps(error_msg))
+                return
+
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            loop = asyncio.get_event_loop()
+            tmp_dst = dst + ".tmp"
+
+            copied_bytes = 0
+            start_time = time.time()
+            last_update_time = start_time
+            prev_progress = -0.01 # Ensure first update is sent
+
+            # Send initial progress
+            initial_msg = {
+                "id": file_id,
+                "filename": filename,
+                "size": human_readable_size,
+                "eta": "calculating...",
+                "progress": 0.0
+            }
+            send_to_ui(json.dumps(initial_msg))
+
+            try:
+                with open(src, 'rb') as fsrc, open(tmp_dst, 'wb') as fdst:
+                    while True:
+                        if self.should_exit or self.suspend_flag:
+                            logging.info(f"Copy of {src} interrupted or suspended.")
+                            if os.path.exists(tmp_dst): os.remove(tmp_dst)
+                            # Optionally send a "cancelled" or "paused" status to UI
+                            return
+
+                        chunk = await loop.run_in_executor(self.executor, fsrc.read, 8192 * 16) # 128KB chunk
+                        if not chunk:
+                            break
+                        await loop.run_in_executor(self.executor, fdst.write, chunk)
+                        copied_bytes += len(chunk)
+                        
+                        progress = copied_bytes / total_size_bytes if total_size_bytes > 0 else 1.0
+                        
+                        current_time = time.time()
+                        if progress > prev_progress + 0.01 or current_time - last_update_time > 0.5: # Update every 1% or 0.5s
+                            elapsed_time = current_time - start_time
+                            eta_str = "calculating..."
+                            if progress > 0.001 and elapsed_time > 0.1:
+                                bytes_per_second = copied_bytes / elapsed_time
+                                if bytes_per_second > 0:
+                                    remaining_bytes = total_size_bytes - copied_bytes
+                                    remaining_seconds = remaining_bytes / bytes_per_second if remaining_bytes > 0 else 0
+                                    eta_str = f"{int(remaining_seconds // 60)}m {int(remaining_seconds % 60)}s"
+                                else:
+                                    eta_str = "stalled"
+                            
+                            progress_msg = {
+                                "id": file_id, 
+                                "filename": filename, 
+                                "size": human_readable_size, 
+                                "eta": eta_str, "progress": progress}
+                            send_to_ui(json.dumps(progress_msg))
+                            prev_progress = progress
+                            last_update_time = current_time
+
+                with open(tmp_dst, 'rb') as f_tmp_for_fsync:
+                    await loop.run_in_executor(self.executor, os.fsync, f_tmp_for_fsync.fileno())
+
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
-                loop = asyncio.get_event_loop()
-
-                tmp_dst = dst + ".tmp"
-
-                # Copy file in executor
-                await loop.run_in_executor(self.executor, shutil.copy2, src, tmp_dst)
-
-                # Flush file data to disk
-                with open(tmp_dst, 'rb') as f:
-                    os.fsync(f.fileno())
-
                 os.replace(tmp_dst, dst)
                 logging.info(f"Backed up: {src} -> {dst}")
+                final_msg = {
+                    "id": file_id, 
+                    "filename": filename, 
+                    "size": human_readable_size, 
+                    "eta": "done", "progress": 1.0}
+                send_to_ui(json.dumps(final_msg))
             except Exception as e:
                 logging.error(f"Error copying {src} -> {dst}: {e}")
                 try:
@@ -164,6 +253,8 @@ class Daemon:
                         os.remove(tmp_dst)
                 except Exception:
                     pass
+                error_msg = {"id": file_id, "filename": filename, "size": human_readable_size, "eta": "error", "progress": prev_progress if prev_progress > 0 else 0.0, "error": str(e)}
+                send_to_ui(json.dumps(error_msg))
 
     def load_folder_metadata(self, top_rel_path):
         meta_path = os.path.join(self.main_backup_dir, top_rel_path, '.backup_meta.json')
@@ -249,10 +340,10 @@ class Daemon:
                     main_path = os.path.join(self.main_backup_dir, frel)
     
                     if not os.path.exists(main_path):
-                        tasks.append(self.copy_file(fsrc, main_path))
+                        tasks.append(self.copy_file(fsrc, main_path, frel))
                     elif self.file_was_updated(fsrc, frel):
                         session_backup_path = os.path.join(session_backup_dir, frel)
-                        tasks.append(self.copy_file(fsrc, session_backup_path))
+                        tasks.append(self.copy_file(fsrc, session_backup_path, frel))
     
             self.save_folder_metadata(top_level_rel_path, new_meta)
     
@@ -309,14 +400,14 @@ class Daemon:
 
 
 if __name__ == "__main__":
-    LOG_FILE_PATH = os.path.expanduser("~/.logging.log")
-    os.makedirs(os.path.dirname(LOG_FILE_PATH), exist_ok=True)
+    server = SERVER()
+    os.makedirs(os.path.dirname(server.LOG_FILE_PATH), exist_ok=True)
     
     formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     
-    file_handler = logging.FileHandler(LOG_FILE_PATH)
+    file_handler = logging.FileHandler(server.LOG_FILE_PATH)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
     
@@ -324,11 +415,10 @@ if __name__ == "__main__":
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
     
-    server = SERVER()
-    daemon = Daemon()
     setproctitle.setproctitle(f'{server.APP_NAME} - daemon')
 
     try:
+        daemon = Daemon()
         asyncio.run(daemon.run())
     except Exception as e:
         logging.error(f"Daemon exception: {e}")

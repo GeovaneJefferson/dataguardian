@@ -73,6 +73,7 @@ class BackupWindow(Adw.ApplicationWindow):
         # Adwaita 1.4-
         # Create the HeaderBar.
         header = Adw.HeaderBar()
+        # header.set_title_widget(Gtk.Label(label="🛡️ Data Guardian", xalign=0))
         main_layout_box.append(header) # Add the HeaderBar to the top of the main_layout_box.
 
         # Create your main horizontal content box (this will contain your sidebar, center, and info panels).
@@ -170,6 +171,14 @@ class BackupWindow(Adw.ApplicationWindow):
         self.search_entry.connect("search-changed", self.on_search_changed)
         center_box.append(self.search_entry)
 
+
+        # filter_box = Gtk.Box(spacing=12)
+        # filetype_combo = Adw.ComboRow(title="File Type", model=["All", ".txt", ".pdf", ".jpg"])
+        # date_combo = Adw.ComboRow(title="Date Modified", model=["Any", "Today", "This Week", "This Month"])
+        # filter_box.append(filetype_combo)
+        # filter_box.append(date_combo)
+        # center_box.append(filter_box)
+
         self.left_breadcrumbs = Gtk.Label(halign=Gtk.Align.START)
         center_box.append(self.left_breadcrumbs)
 
@@ -212,7 +221,13 @@ class BackupWindow(Adw.ApplicationWindow):
         self.loading_label.set_valign(Gtk.Align.START)
         center_box.append(self.loading_label)
         self.loading_label.set_visible(False)  # Show at startup
-        
+
+        # ScrolledWindow for the ListBox
+        scrolled_window = Gtk.ScrolledWindow()
+        scrolled_window.set_hexpand(True)
+        scrolled_window.set_vexpand(True)
+        scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC) # Horizontal, Vertical
+
         # Listbox for search results
         self.listbox = Gtk.ListBox()
         self.listbox.connect("row-selected", self.on_listbox_selection_changed)
@@ -220,29 +235,9 @@ class BackupWindow(Adw.ApplicationWindow):
         key_controller = Gtk.EventControllerKey()
         key_controller.connect("key-pressed", self.on_listbox_key_press)
         self.listbox.add_controller(key_controller)
-        center_box.append(self.listbox)
+        scrolled_window.set_child(self.listbox) # Add ListBox to ScrolledWindow
+        center_box.append(scrolled_window) # Add ScrolledWindow to center_box
         main_content.append(center_box)
-
-        # # Create the ListBox
-        # self.listbox = Gtk.ListBox()
-        # self.listbox.connect("row-selected", self.on_listbox_selection_changed)
-
-        # key_controller = Gtk.EventControllerKey()
-        # key_controller.connect("key-pressed", self.on_listbox_key_press)
-        # self.listbox.add_controller(key_controller)
-
-        # # Create a ScrolledWindow and add the ListBox to it
-        # self.scrolled_window = Gtk.ScrolledWindow()
-        # self.scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)  # Both scrollbars
-        # self.scrolled_window.set_propagate_natural_width(True)  # Allow horizontal expansion
-
-        # Add the ListBox to the ScrolledWindow
-        # self.scrolled_window.set_child(self.listbox)
-
-        # center_box.append(self.listbox)
-
-        # Add the ScrolledWindow to your layout (e.g., main box or window)
-        # main_content.append(self.scrolled_window)  # Or pack_start/add, depending on your layout
 
         # Right panel
         info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -251,6 +246,8 @@ class BackupWindow(Adw.ApplicationWindow):
         info_box.set_margin_bottom(12)
         info_box.set_margin_start(12)
         info_box.set_margin_end(12)
+        #info_box.add_css_class("card")
+        info_box.set_valign(Gtk.Align.START)
 
         self.device_icon = Gtk.Image.new_from_icon_name("drive-harddisk-symbolic")
         self.device_icon.set_pixel_size(48)
@@ -284,7 +281,7 @@ class BackupWindow(Adw.ApplicationWindow):
         self.used_free_label = Gtk.Label(label=f"<b>Total:</b> {total_size}, <b>Used:</b> {used_size} ", xalign=0)
         self.used_free_label.set_use_markup(True)
         info_box.append(self.used_free_label)
-        
+
         ##################################################################
         # Logs
         ##################################################################
@@ -304,6 +301,7 @@ class BackupWindow(Adw.ApplicationWindow):
             self.logs_label.set_text("")
             self.logs_label.set_markup("<b>Most Recent Backup:</b>\nNever")
 
+        # Separator
         separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
         separator.set_margin_top(6)
         separator.set_margin_bottom(6)
@@ -378,12 +376,30 @@ class BackupWindow(Adw.ApplicationWindow):
         self.find_updates.connect("clicked", lambda b: self.find_update(self.selected_file_path))
         info_box.append(self.find_updates)
 
-        # Spacer to push the restore button to the bottom
-        spacer = Gtk.Box()
-        spacer.set_hexpand(False)
-        spacer.set_vexpand(True)
-        info_box.append(spacer)
+        # Separator
+        separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        separator.set_margin_top(6)
+        separator.set_margin_bottom(6)
+        info_box.append(separator)
         
+        # Transfer ListBox
+        self.transfer_rows = {}  # file_id → BackupProgressRow
+        self.transfer_listbox = Gtk.ListBox()
+        self.transfer_listbox.set_vexpand(False)
+        info_box.append(self.transfer_listbox)
+
+        # Spacer to push the restore button to the bottom
+        # spacer = Gtk.Box()
+        # spacer.set_hexpand(False)
+        # spacer.set_vexpand(True)
+        # info_box.append(spacer)
+        
+        # Separator
+        separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        separator.set_margin_top(6)
+        separator.set_margin_bottom(6)
+        info_box.append(separator)
+
         # Restore button
         self.restore_button = Gtk.Button(label="Restore File")
         self.restore_button.set_sensitive(False)
@@ -400,64 +416,12 @@ class BackupWindow(Adw.ApplicationWindow):
 
         main_content.append(info_box)
 
-        # css_provider = Gtk.CssProvider()
-        # css_provider.load_from_data(b'''
-        #     window {
-        #         background-color: #2a2a2a;
-        #     }
-        #     #center-box {
-        #         background-color: #1e1e1e;
-        #         padding: 12px;
-        #         border-radius: 12px;
-        #     }
-        #     #title-label {
-        #         font-size: 20px;
-        #         font-weight: bold;
-        #         color: #ffffff;
-        #     }
-        #     .center-panel Gtk.Label {
-        #         color: #ffffff;
-        #     }
-        #     Gtk.Label {
-        #         color: #cccccc;
-        #     }
-        #     .bubble {
-        #         background-color: #333333;
-        #         border-radius: 10px;
-        #         padding: 12px;
-        #         margin-top: 20px;
-        #     }
-        #     #status-ok {
-        #         color: #28a745;
-        #     }
-        #     #status-in-progress {
-        #         color: #f0ad4e;
-        #     }
-        #     #status-fail {
-        #         color: #dc3545;
-        #     }
-        #     .restore-button {
-        #         background-image: none;
-        #         background-color: #3b82f6;
-        #         color: white;
-        #         border-radius: 6px;
-        #         padding: 8px 16px;
-        #         font-weight: bold;
-        #     }
-        #     .restore-button:hover {
-        #         background-color: #2563eb;
-        #     }
-        #     .restore-button:disabled {
-        #         background-color: #6b7280;
-        #         color: #d1d5db;
-        #     }
-        # ''')
-        # Gtk.StyleContext.add_provider_for_display(
-        #     Gdk.Display.get_default(),
-        #     css_provider,
-        #     Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-        # )
-        
+        # Spacer to push the restore button to the bottom
+        # spacer = Gtk.Box()
+        # spacer.set_hexpand(False)
+        # spacer.set_vexpand(True)
+        # info_box.append(spacer)
+
         ##########################################################################
 		# Connect signals
 		##########################################################################
@@ -469,18 +433,20 @@ class BackupWindow(Adw.ApplicationWindow):
 		##########################################################################
         self.add_found_devices_to_devices_popover_box()  # Add found devices to the popover
         self.populate_latest_backups()  # At startup populate with latest backups results
+        # Start socket server in background
+        threading.Thread(target=self.start_server, daemon=True).start()  # Start the socket server in a separate thread
 
     ##########################################################################
     # BACKUP
     ##########################################################################
     def add_found_devices_to_devices_popover_box(self):
         # Clear old children
-        child = self.devices_popover_box.get_first_child()
-        while child:
-            next_child = child.get_next_sibling()
+        while True:
+            child = self.devices_popover_box.get_first_child()
+            if not child:
+                break
             self.devices_popover_box.remove(child)
-            child = next_child
-
+ 
         # Clear old buttons
         self.location_buttons.clear()
 
@@ -586,13 +552,77 @@ class BackupWindow(Adw.ApplicationWindow):
         latest_files = self.get_latest_backup_files()
         if latest_files:
             for f in latest_files:
-                print(f)
+                pass
             # Optionally, populate your listbox or UI with these files
             self.populate_results([{"name": os.path.basename(f), "path": f, "date": os.path.getmtime(f)} for f in latest_files])
         else:
             print("No backup files found.")
 
+    ##########################################################################
+    # Socket reciever
+    ##########################################################################
+    def start_server(self):
+        if os.path.exists(server.SOCKET_PATH):
+            os.remove(server.SOCKET_PATH)
 
+        server_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server_socket.bind(server.SOCKET_PATH)
+        server_socket.listen(5)
+        print(f"Listening on UNIX socket {server.SOCKET_PATH}...")
+
+        while True:
+            conn, _ = server_socket.accept()
+            threading.Thread(target=self.handle_client, args=(conn,), daemon=True).start()
+
+    def handle_client(self, conn):
+        with conn:
+            while True:
+                data = conn.recv(1024)
+                if not data:
+                    break
+                try:
+                    msg = json.loads(data.decode("utf-8").strip())
+                    file_id = msg.get("id")  # must be unique per file (e.g., hash or relative path)
+                    filename = msg.get("filename", "unknown")
+                    size = msg.get("size", "0 KB")
+                    eta = msg.get("eta", "n/a")
+                    progress = msg.get("progress", 0.0)
+
+                    GLib.idle_add(self.update_or_create_transfer, file_id, filename, size, eta, progress)
+                except Exception as e:
+                    print("Socket error:", e)
+
+    def update_or_create_transfer(self, file_id, filename, size, eta, progress):
+        if file_id not in self.transfer_rows:
+            # Create the content widget (your BackupProgressRow)
+            content_widget = BackupProgressRow(file_id, filename, size, eta)
+            # Create a ListBoxRow and add the content widget to it
+            listbox_row = Gtk.ListBoxRow()
+            listbox_row.set_child(content_widget)
+            
+            self.transfer_rows[file_id] = listbox_row # Store the Gtk.ListBoxRow
+            self.transfer_listbox.append(listbox_row) # Add the Gtk.ListBoxRow
+
+        # Retrieve the Gtk.ListBoxRow
+        listbox_row_to_update = self.transfer_rows.get(file_id)
+        if not listbox_row_to_update:
+            # This can happen if the row was removed due to progress >= 1.0
+            # in a previous call, but a new update message arrives.
+            return
+
+        # Get your content_widget (BackupProgressRow) from the ListBoxRow
+        content_widget_to_update = listbox_row_to_update.get_child()
+        if isinstance(content_widget_to_update, BackupProgressRow): # Type check for safety
+            content_widget_to_update.update(size, eta, progress)
+ 
+        if progress >= 1.0:
+            listbox_row_to_remove = self.transfer_rows.pop(file_id, None) # Pop and get
+            if listbox_row_to_remove and listbox_row_to_remove.get_parent() == self.transfer_listbox:
+                self.transfer_listbox.remove(listbox_row_to_remove) # Remove the Gtk.ListBoxRow
+
+    ##########################################################################
+    # Backup
+    ##########################################################################
     def get_latest_backup_files(self):
         base_backup_folder = server.main_backup_folder()
         backup_root = server.backup_folder_name()
@@ -735,19 +765,6 @@ class BackupWindow(Adw.ApplicationWindow):
             #         sorted(self.files, key=lambda x: x["date"], reverse=True)[:self.page_size]
             #     )
         threading.Thread(target=scan, daemon=True).start()
-    
-    # def scan_files_folder_threaded(self):
-    #     """Scan files in a background thread."""
-    #     def scan():
-    #         self.files = self.scan_files_folder()
-    #         # Show the latest files after scanning
-    #         # GLib.idle_add(
-    #         #     self.populate_results, 
-    #         #     sorted(
-    #         #         self.files, 
-    #         #         key=lambda x: x["date"], 
-    #         #         reverse=True)[:self.page_size])
-    #     threading.Thread(target=scan, daemon=True).start()
 
     def scan_files_folder(self):
         """Scan files and return a list of file dictionaries."""
@@ -836,12 +853,12 @@ class BackupWindow(Adw.ApplicationWindow):
             self.loading_label.set_visible(False)
             
         # Clear existing results from the listbox
-        child = self.listbox.get_first_child()
-        while child:
-            next_child = child.get_next_sibling()
-            self.listbox.remove(child)
-            child = next_child
-
+        while True:
+            first_child_row = self.listbox.get_first_child() # This returns a Gtk.ListBoxRow
+            if not first_child_row:
+                break
+            self.listbox.remove(first_child_row)
+ 
         limited_results = results[:self.page_size]
 
         for file_info in limited_results:
@@ -1849,7 +1866,7 @@ class SettingsWindow(Adw.PreferencesWindow):
     def display_excluded_folders(self):
         """Display loaded excluded folders."""
         for folder in self.ignored_folders:
-            logging.info("Adding folder: %s", folder)
+            # logging.info("Adding folder: %s", folder)
             self.add_folder_to_list(folder)
     
     def load_folders_from_config(self):
@@ -2141,6 +2158,65 @@ class BackupApp(Adw.Application):
         win = BackupWindow(application=self)
         win.present()
 
+class BackupProgressRow(Gtk.Box):
+    def __init__(self, file_id, filename, size, eta):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.file_id = file_id
+        self.set_margin_top(6)
+        self.set_margin_bottom(6)
+        self.set_margin_start(8)
+        self.set_margin_end(8)
+        self.set_hexpand(True)
+        self.add_css_class("backup-progress-row")
+
+        # Top row: icon + filename + spacer + close button
+        top_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        top_row.set_hexpand(True)
+        self.append(top_row)
+
+        # File icon
+        icon = Gtk.Image.new_from_icon_name("text-x-generic-symbolic")
+        icon.set_pixel_size(24)
+        top_row.append(icon)
+
+        # Info column
+        info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        info_box.set_hexpand(True)
+        self.filename_label = Gtk.Label(label=filename)
+        self.filename_label.set_xalign(0)
+        self.filename_label.set_max_width_chars(32)
+
+        self.size_eta_label = Gtk.Label(label=f"{size} • {eta}")
+        self.size_eta_label.set_xalign(0)
+        self.size_eta_label.add_css_class("dim-label")
+
+        info_box.append(self.filename_label)
+        info_box.append(self.size_eta_label)
+        top_row.append(info_box)
+
+        # Spacer
+        spacer = Gtk.Box()
+        spacer.set_hexpand(True)
+        top_row.append(spacer)
+
+        # Cancel button
+        self.cancel_button = Gtk.Button(icon_name="window-close-symbolic")
+        self.cancel_button.add_css_class("flat")
+        self.cancel_button.set_valign(Gtk.Align.CENTER)
+        top_row.append(self.cancel_button)
+
+        # Progress bar
+        self.progress = Gtk.ProgressBar()
+        self.progress.set_hexpand(True)
+        self.progress.set_fraction(0.0)
+        self.progress.set_margin_top(4)
+        self.append(self.progress)
+
+    def update(self, size, eta, progress):
+        self.size_eta_label.set_text(f"{size} • {eta}")
+        self.progress.set_fraction(progress)
+
+
 def main():
     # server.setup_logging()
     app = BackupApp()
@@ -2148,14 +2224,13 @@ def main():
 
 
 if __name__ == "__main__":
-    LOG_FILE_PATH = os.path.expanduser("~/.logging_ui.log")
-    os.makedirs(os.path.dirname(LOG_FILE_PATH), exist_ok=True)
+    os.makedirs(os.path.dirname(server.LOG_FILE_PATH), exist_ok=True)
     
     formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     
-    file_handler = logging.FileHandler(LOG_FILE_PATH)
+    file_handler = logging.FileHandler(server.LOG_FILE_PATH)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
     
