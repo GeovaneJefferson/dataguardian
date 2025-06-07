@@ -307,6 +307,12 @@ class BackupWindow(Adw.ApplicationWindow):
         separator.set_margin_bottom(6)
         info_box.append(separator)
         
+        # Restore progress bar
+        self.restore_progressbar = Gtk.ProgressBar()
+        #self.restore_progressbar.set_hexpand(True)
+        self.restore_progressbar.set_visible(False)
+        info_box.append(self.restore_progressbar)
+
         # Logs button with icon
         logs_icon = Gtk.Image.new_from_icon_name("gnome-logs-symbolic")
         logs_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -376,6 +382,15 @@ class BackupWindow(Adw.ApplicationWindow):
         self.find_updates.connect("clicked", lambda b: self.find_update(self.selected_file_path))
         info_box.append(self.find_updates)
 
+        # Restore button
+        self.restore_button = Gtk.Button(label="Restore File")
+        self.restore_button.set_sensitive(False)
+        self.restore_button.set_hexpand(False)
+        self.restore_button.set_valign(Gtk.Align.CENTER)
+        self.restore_button.set_css_classes(["suggested-action"])
+        self.restore_button.connect("clicked", self.on_restore_button_clicked)
+        info_box.append(self.restore_button)
+        
         # Separator
         separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
         separator.set_margin_top(6)
@@ -398,32 +413,6 @@ class BackupWindow(Adw.ApplicationWindow):
         transfer_scrolled_window.set_vexpand(False) # The scrolled window itself should not expand vertically in info_box
 
         info_box.append(transfer_scrolled_window)
-        # Spacer to push the restore button to the bottom
-        # spacer = Gtk.Box()
-        # spacer.set_hexpand(False)
-        # spacer.set_vexpand(True)
-        # info_box.append(spacer)
-        
-        # Separator
-        separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
-        separator.set_margin_top(6)
-        separator.set_margin_bottom(6)
-        info_box.append(separator)
-
-        # Restore button
-        self.restore_button = Gtk.Button(label="Restore File")
-        self.restore_button.set_sensitive(False)
-        self.restore_button.set_hexpand(False)
-        self.restore_button.set_valign(Gtk.Align.CENTER)
-        self.restore_button.set_css_classes(["suggested-action"])
-        self.restore_button.connect("clicked", self.on_restore_button_clicked)
-        info_box.append(self.restore_button)
-        
-        self.restore_progressbar = Gtk.ProgressBar()
-        #self.restore_progressbar.set_hexpand(True)
-        self.restore_progressbar.set_visible(False)
-        info_box.append(self.restore_progressbar)
-
         main_content.append(info_box)
 
         # Spacer to push the restore button to the bottom
@@ -572,13 +561,19 @@ class BackupWindow(Adw.ApplicationWindow):
     # Socket reciever
     ##########################################################################
     def start_server(self):
+        os.makedirs(os.path.dirname(server.SOCKET_PATH), exist_ok=True)
+
         if os.path.exists(server.SOCKET_PATH):
             os.remove(server.SOCKET_PATH)
 
         server_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         server_socket.bind(server.SOCKET_PATH)
+
+        # Create socket
+        server_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server_socket.bind(socket_path)
         server_socket.listen(5)
-        print(f"Listening on UNIX socket {server.SOCKET_PATH}...")
+        print(f"Listening on UNIX socket {socket_path}...")
 
         while True:
             conn, _ = server_socket.accept()
@@ -2214,6 +2209,7 @@ class BackupProgressRow(Gtk.Box):
         # Top row: icon + filename + spacer + close button
         top_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         top_row.set_hexpand(True)
+        top_row.set_vexpand(True)
         self.append(top_row)
 
         # File icon

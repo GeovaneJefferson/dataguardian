@@ -5,15 +5,31 @@ sdk: org.gnome.Sdk
 command: dataguardian.sh
 
 finish-args:
-  - --share=ipc
-  - --device=all
-  - --socket=x11
+  # GUI support
   - --socket=wayland
-  - --filesystem=host
-  - --filesystem=home
+  - --socket=x11
+  - --share=ipc
+  - --device=dri
+
+  # Access to backup targets and general network
   - --share=network
-  - --socket=session-bus  
+
+  # File access (host = full system; use with care)
+  - --filesystem=host  # Needed for full backup access
+  - --filesystem=home
+  # If more security is desired, replace above with:
+  # - --filesystem=/home
+  - --filesystem=/run/media
+  - --filesystem=/mnt
+
+  # Runtime socket (for daemon communication)
+  - --filesystem=xdg-run/dataguardian:create  # Allow socket communication if used
+
+  # Access to user bus and Flatpak APIs
+  - --socket=session-bus
   - --talk-name=org.freedesktop.Flatpak
+
+  # Required for some file chooser/storage access
   - --filesystem=xdg-run/flatpak
   - --filesystem=xdg-run/gvfsd
 
@@ -24,50 +40,48 @@ modules:
       - type: git
         url: https://github.com/GeovaneJefferson/dataguardian.git
         branch: main
+
       - type: file
         path: com.gnome.dataguardian.metainfo.xml
+
       - type: file
         path: data/icons/com.gnome.dataguardian.png
 
     build-commands:
-      # Create main app directory
+      # App main data
       - mkdir -p /app/share/dataguardian
-
-      # Copy source and data
       - cp -r src /app/share/dataguardian
       - cp -r data /app/share/dataguardian
       - cp -r share /app/share/dataguardian
 
-      # Install .desktop file
+      # Desktop launcher
       - mkdir -p /app/share/applications
       - cp share/applications/com.gnome.dataguardian.desktop /app/share/applications/
 
-      # Install icon (128x128 recommended for modern desktops)
+      # App icon (modern and legacy)
       - mkdir -p /app/share/icons/hicolor/128x128/apps
       - cp data/icons/com.gnome.dataguardian.png /app/share/icons/hicolor/128x128/apps/
-
-      # Optionally install to 48x48 for legacy support
       - mkdir -p /app/share/icons/hicolor/48x48/apps
       - cp data/icons/com.gnome.dataguardian.png /app/share/icons/hicolor/48x48/apps/
 
-      # Install AppStream metadata
+      # AppStream metadata
       - mkdir -p /app/share/metainfo
       - cp com.gnome.dataguardian.metainfo.xml /app/share/metainfo/
 
-      # Install shell scripts
+      # Executable scripts
       - install -D -m755 dataguardian.sh /app/bin/dataguardian.sh
       - install -D -m755 stop-daemon.sh /app/bin/stop-daemon.sh
 
-      # Create config directory
+      # Runtime config storage (optional)
       - mkdir -p /app/share/dataguardian/config
 
-      # Install Python dependencies
+      # Python dependencies
       - pip3 install --prefix=/app -r requirements.txt
 
     build-options:
       build-args:
         - --share=network
 
-# Optionally, add cleanup-commands if needed
+# Optional: Add this if stop-daemon.sh should clean something up at build time
 # cleanup-commands:
-#   - /app/bin/stop-daemon.sh
+#   - /app/bin/stop-daemon.sh || true
