@@ -107,10 +107,7 @@ class SERVER:
 		
 		# self.SOCKET_PATH = "/tmp/guardian-ui.sock"
 		# self.SOCKET_PATH: str = f"~/.var/app/{self.ID}/cache/tmp/guardian-ui.sock"
-		# self.SOCKET_PATH = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "guardian-ui.sock")
-		SOCKET_DIR = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "dataguardian")
-		os.makedirs(SOCKET_DIR, exist_ok=True)
-		self.SOCKET_PATH = os.path.join(SOCKET_DIR, "socket")
+		self.SOCKET_PATH = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "guardian-ui.sock")
 
 		################################################################################
 		# HOME SYSTEM LOCATIONS

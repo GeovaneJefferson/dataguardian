@@ -561,19 +561,18 @@ class BackupWindow(Adw.ApplicationWindow):
     # Socket reciever
     ##########################################################################
     def start_server(self):
+        # Make sure the directory for the socket exists
         os.makedirs(os.path.dirname(server.SOCKET_PATH), exist_ok=True)
 
+        # Remove old socket if it exists
         if os.path.exists(server.SOCKET_PATH):
             os.remove(server.SOCKET_PATH)
 
+        # Create and bind the socket once
         server_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         server_socket.bind(server.SOCKET_PATH)
-
-        # Create socket
-        server_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        server_socket.bind(socket_path)
         server_socket.listen(5)
-        print(f"Listening on UNIX socket {socket_path}...")
+        print(f"Listening on UNIX socket {server.SOCKET_PATH}...")
 
         while True:
             conn, _ = server_socket.accept()
