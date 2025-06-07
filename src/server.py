@@ -103,9 +103,10 @@ class SERVER:
 		self.GET_USERS_DE: str = "XDG_CURRENT_DESKTOP"
 		self.GET_USERS_PACKAGE_MANAGER: str = "cat /etc/os-release"
 		self.USER_HOME: str = os.path.expanduser("~")  # Get user's home directory
+		self.LOG_FILE_PATH = os.path.expanduser("~/.logging_ui.log")
+		
 		# self.SOCKET_PATH = "/tmp/guardian-ui.sock"
 		self.SOCKET_PATH: str = f"~/.var/app/{self.ID}/cache/tmp/guardian-ui.sock"
-		self.LOG_FILE_PATH = os.path.expanduser("~/.logging_ui.log")
 
 		################################################################################
 		# HOME SYSTEM LOCATIONS
