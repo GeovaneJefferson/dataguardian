@@ -385,9 +385,19 @@ class BackupWindow(Adw.ApplicationWindow):
         # Transfer ListBox
         self.transfer_rows = {}  # file_id → BackupProgressRow
         self.transfer_listbox = Gtk.ListBox()
-        self.transfer_listbox.set_vexpand(False)
-        info_box.append(self.transfer_listbox)
+        # self.transfer_listbox.set_vexpand(False) # vexpand defaults to False. ListBox will size to content.
 
+        # Wrap the ListBox in a ScrolledWindow to handle overflow
+        transfer_scrolled_window = Gtk.ScrolledWindow()
+        transfer_scrolled_window.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC) # No horizontal, auto vertical
+        transfer_scrolled_window.set_child(self.transfer_listbox)
+        
+        # Set a preferred height for the transfer area. If items exceed this, it will scroll.
+        # Adjust height as needed (e.g., to show 3-4 items by default).
+        transfer_scrolled_window.set_size_request(-1, 220) # e.g., height for about 3-4 rows
+        transfer_scrolled_window.set_vexpand(False) # The scrolled window itself should not expand vertically in info_box
+
+        info_box.append(transfer_scrolled_window)
         # Spacer to push the restore button to the bottom
         # spacer = Gtk.Box()
         # spacer.set_hexpand(False)
@@ -615,10 +625,8 @@ class BackupWindow(Adw.ApplicationWindow):
         if isinstance(content_widget_to_update, BackupProgressRow): # Type check for safety
             content_widget_to_update.update(size, eta, progress)
  
-        if progress >= 1.0:
-            listbox_row_to_remove = self.transfer_rows.pop(file_id, None) # Pop and get
-            if listbox_row_to_remove and listbox_row_to_remove.get_parent() == self.transfer_listbox:
-                self.transfer_listbox.remove(listbox_row_to_remove) # Remove the Gtk.ListBoxRow
+        if progress >= 1.0: # If this item just completed
+            self.prune_completed_transfers_display()
 
     ##########################################################################
     # Backup
@@ -640,7 +648,6 @@ class BackupWindow(Adw.ApplicationWindow):
                 key=lambda folder: datetime.strptime(folder, "%d-%m-%Y"),
                 reverse=True
             )
-
         if not date_folders:
             return []
 
@@ -672,6 +679,41 @@ class BackupWindow(Adw.ApplicationWindow):
             for file in files:
                 backup_files.append(os.path.join(root, file))
         return backup_files
+
+    def prune_completed_transfers_display(self):
+        """
+        Ensures that only the latest 4 completed transfer items are shown in the listbox.
+        Older completed items are removed.
+        """
+        all_listbox_rows_from_widget = []
+        child_row_widget = self.transfer_listbox.get_first_child()
+        while child_row_widget:
+            all_listbox_rows_from_widget.append(child_row_widget)
+            child_row_widget = child_row_widget.get_next_sibling()
+
+        completed_row_widgets_in_listbox = []
+        for row_widget in all_listbox_rows_from_widget:
+            content_widget = row_widget.get_child()
+            if isinstance(content_widget, BackupProgressRow) and \
+               content_widget.progress.get_fraction() >= 1.0:
+                completed_row_widgets_in_listbox.append(row_widget)
+        
+        num_to_prune = len(completed_row_widgets_in_listbox) - 4
+        
+        if num_to_prune > 0:
+            # Prune the oldest 'num_to_prune' completed items.
+            # These are at the beginning of completed_row_widgets_in_listbox
+            # because it reflects the order in the Gtk.ListBox.
+            for i in range(num_to_prune):
+                row_widget_to_remove = completed_row_widgets_in_listbox[i]
+                
+                file_id_to_remove = next((fid for fid, lr_widget in self.transfer_rows.items() if lr_widget == row_widget_to_remove), None)
+                
+                if file_id_to_remove:
+                    self.transfer_rows.pop(file_id_to_remove, None)
+                
+                if row_widget_to_remove.get_parent() == self.transfer_listbox:
+                    self.transfer_listbox.remove(row_widget_to_remove)
     
     # def clear_preview(self):
     #     if self.current_preview_widget:
@@ -2213,8 +2255,13 @@ class BackupProgressRow(Gtk.Box):
         self.append(self.progress)
 
     def update(self, size, eta, progress):
-        self.size_eta_label.set_text(f"{size} • {eta}")
         self.progress.set_fraction(progress)
+        if progress >= 1.0:
+            self.size_eta_label.set_text(f"{size} • completed")
+            self.cancel_button.set_visible(False)
+        else:
+            self.size_eta_label.set_text(f"{size} • {eta}")
+            self.cancel_button.set_visible(True)
 
 
 def main():
