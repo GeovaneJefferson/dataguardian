@@ -33,6 +33,7 @@ import fcntl
 import mimetypes
 import cairo
 import tempfile
+import math
 
 
 from datetime import datetime, timedelta
@@ -79,7 +80,11 @@ class SERVER:
 			".xlsx", # Excel files (requires libraries like OpenPyXL to render)
 			".pptx", # PowerPoint files (requires libraries like python-pptx to render)
 		]
-
+		self.IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg"}
+		self.TEXT_EXTENSIONS = {
+			".txt", ".py", ".md", ".csv", ".json", ".xml", ".ini", ".log",
+			  ".gd", ".js", ".html", ".css", ".sh", ".c", ".cpp", ".h", ".hpp",
+			    ".java", ".rs", ".go", ".toml", ".yml", ".yaml"}
 		################################################################################
 		# APP SETTINGS
 		################################################################################
@@ -87,6 +92,7 @@ class SERVER:
 		self.APP_NAME: str = "Data Guardian"
 		self.APP_NAME_CLOSE_LOWER: str = "dataguardian"
 		self.APP_VERSION: str = "v0.1 dev"
+		self.SUMMARY_FILENAME: str = ".backup_summary.json"
 		self.BACKUPS_LOCATION_DIR_NAME: str = "backups"  # Where backups will be saved
 		self.APPLICATIONS_LOCATION_DIR_NAME: str = "applications"
 
@@ -103,7 +109,7 @@ class SERVER:
 		self.GET_USERS_DE: str = "XDG_CURRENT_DESKTOP"
 		self.GET_USERS_PACKAGE_MANAGER: str = "cat /etc/os-release"
 		self.USER_HOME: str = os.path.expanduser("~")  # Get user's home directory
-		self.LOG_FILE_PATH = os.path.expanduser("~/.logging_ui.log")
+		self.LOG_FILE_PATH = os.path.expanduser(f"~/.{self.APP_NAME_CLOSE_LOWER}.log")
 		
 		# self.SOCKET_PATH = "/tmp/guardian-ui.sock"
 		# self.SOCKET_PATH: str = f"~/.var/app/{self.ID}/cache/tmp/guardian-ui.sock"
@@ -156,13 +162,6 @@ class SERVER:
 			section='BACKUP',
 			option='backing_up')
 
-		# LOG FILE
-		# self.LOG_LOCATION: str = os.path.join(self.create_base_folder(), f'{self.APP_NAME_CLOSE_LOWER}.log')
-		self.LOG_LOCATION: str = os.path.join(Path.home(), '.var', 'app', self.ID, 'config', f'{self.APP_NAME_CLOSE_LOWER}.log')
-		# self.REMAINING_FILES_LOCATION: str = os.path.join(self.create_base_folder(), 'remaining_files.json')
-		self.INTERRUPTED_MAIN: str = os.path.join(Path.home(), '.var', 'app', self.ID, 'config', '.interrupted_main')
-		self.INTERRUPTED_UPDATE: str = os.path.join(Path.home(), '.var', 'app', self.ID, 'config', '.interrupted_update')
-
 		# DAEMON PID
 		# self.DAEMON_PY_LOCATION: str = 'src/daemon.py'
 		# self.DAEMON_PID_LOCATION: str = os.path.join(self.create_base_folder(), 'daemon.pid')
@@ -173,21 +172,10 @@ class SERVER:
         
 		self.CACHE = {}
 		self.cache_file = os.path.join(self.backup_folder_name(), ".cache.json")
-		self.load_cache()
 	
 	##############################################################################
 	# Signal, Loading and Saving Handling
 	##############################################################################
-	def save_backup(self, process=None):
-		logging.info("Saving settings...")
-		#print("Saving settings...")  # Feedback
-		if process == '.main_backup':
-			if not os.path.exists(self.INTERRUPTED_MAIN):
-				with open(self.INTERRUPTED_MAIN, 'w') as f:
-					f.write('Backup to .main_backup was interrupted.')
-				logging.info(f"Created interrupted file: {self.INTERRUPTED_MAIN}")
-				#print(f"Created interrupted file: {self.INTERRUPTED_MAIN}")  # Feedback
-    
 	def create_and_move_files_to_users_home(self):
 		# Create the directory if it doesn't exist
 		config_dir = os.path.dirname(self.CONF_LOCATION)
@@ -272,25 +260,6 @@ class SERVER:
 			# logging.info(f"PID file {server.DAEMON_PID_LOCATION} does not exist.")
 			return False
 	
-	def save_cache(self) -> None:
-		"""Saves the CACHE dictionary to a JSON file."""
-		try:
-			with open(self.cache_file, "w") as f:
-				json.dump(self.CACHE, f, indent=4)
-			logging.info("Cache saved successfully.")
-		except Exception as e:
-			logging.error(f"Error saving cache: {e}")
-    
-	def load_cache(self) -> None:
-		"""Loads the CACHE dictionary from a JSON file if it exists."""
-		try:
-			if os.path.exists(self.cache_file):
-				with open(self.cache_file, "r") as f:
-					self.CACHE = json.load(f)
-				logging.info("Cache loaded successfully.")
-		except Exception as e:
-			logging.error(f"Error loading cache: {e}")
-
 	def is_first_backup(self) -> bool:
 		try:
 			if not os.path.exists(self.main_backup_folder()):
@@ -325,7 +294,18 @@ class SERVER:
 		except Exception as e:
 			#print("Failed to detect filesystem type:", e)
 			return "Unknown"
+	
+	# Hidden files location
+	def get_summary_filename(self) -> str: 
+		return f"{self.create_base_folder()}/.backup_summary.json"
 
+	def get_log_file_path(self) -> str:
+		"""Get the path to the log file."""
+		return f"{self.create_base_folder()}/.logging_ui.log"
+	
+	def get_interrupted_main_file(self) -> str:
+		"""Get the path to the interrupted main file."""
+		return f"{self.create_base_folder()}/.interrupted_main"
 
 	# EXCLUDE FOLDERS
 	def load_ignored_folders_from_config(self):
@@ -824,24 +804,26 @@ class SERVER:
 		
 	def setup_logging(self):
 		"""Sets up logging for file changes."""
+		log_file_path = self.get_log_file_path()
+
 		MAX_LOG_SIZE: int = 20 * 1024 * 1024  # Example: 20 MB
 
 		# Check if the directory for the log file exists; if not, create it
-		log_dir = os.path.dirname(self.LOG_LOCATION)
+		log_dir = os.path.dirname(log_file_path)
 
 		os.makedirs(log_dir, exist_ok=True)  # Create the directory for the log file
 		# Ensure directory and file have correct permissions (user read/write/execute)
 		os.chmod(log_dir, 0o700)  # Only owner can read/write/execute
 
 		"""Check log file size and delete if it exceeds the limit."""
-		if os.path.exists(self.LOG_LOCATION):
-			log_size = os.path.getsize(self.LOG_LOCATION)
+		if os.path.exists(log_file_path):
+			log_size = os.path.getsize(log_file_path)
 			if log_size > MAX_LOG_SIZE:
 				# Delete the log file if it exceeds the max size
-				os.remove(self.LOG_LOCATION)
+				os.remove(log_file_path)
 		else:
 			# Create a new empty log file
-			with open(self.LOG_LOCATION, 'w'):
+			with open(log_file_path, 'w'):
 				pass
 
 		# # Convert the timestamp to a human-readable format
@@ -849,7 +831,7 @@ class SERVER:
 		# human_readable_date = datetime.datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
 
 		logging.basicConfig(
-							filename=self.LOG_LOCATION,
+							filename=log_file_path,
 							level=logging.INFO,
 							format='%(asctime)s - %(message)s')
 		console_handler = logging.StreamHandler()

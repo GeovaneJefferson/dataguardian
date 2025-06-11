@@ -1,4 +1,4 @@
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from has_driver_connection import has_driver_connection
 from server import *
 
@@ -49,7 +49,7 @@ class Daemon:
     def __init__(self):
         self.user_home = server.USER_HOME
 
-        self.executor = ProcessPoolExecutor(max_workers=COPY_CONCURRENCY)
+        self.executor = ThreadPoolExecutor(max_workers=COPY_CONCURRENCY)
         self.copy_semaphore = asyncio.Semaphore(COPY_CONCURRENCY)
 
         self.excluded_dirs = {'__pycache__', 'snap'}
@@ -59,6 +59,7 @@ class Daemon:
 
         self.main_backup_dir = server.main_backup_folder()
         self.update_backup_dir = server.backup_folder_name()
+        self.interruped_main_file = server.get_interrupted_main_file()
 
         self.backup_in_progress = False
         self.suspend_flag = False
@@ -93,8 +94,10 @@ class Daemon:
         """Check if a file differs from its backup versions."""
         try:
             current_stat = os.stat(src)
-        except FileNotFoundError:
+        except FileNotFoundError: #NOSONAR
+            logging.warning(f"File '{rel_path}' not found at source '{src}'. Cannot compare.")
             return False
+        # Add a src_hash_cache to avoid re-calculating hash for the same source file
 
         backup_dates = server.has_backup_dates_to_compare()
         for date_folder in backup_dates:
@@ -125,11 +128,14 @@ class Daemon:
                     try:
                         b_stat = os.stat(backup_file_path)
                         if b_stat.st_size != current_stat.st_size or abs(b_stat.st_mtime - current_stat.st_mtime) > 1:
+                            logging.info(f"File '{rel_path}' updated (size/mtime mismatch with incremental backup {backup_file_path}). Src size: {current_stat.st_size}, Dst size: {b_stat.st_size}. Src mtime: {current_stat.st_mtime}, Dst mtime: {b_stat.st_mtime}")
                             return True
                         if self.file_hash(src) != self.file_hash(backup_file_path):
+                            logging.info(f"File '{rel_path}' updated (hash mismatch with incremental backup {backup_file_path}).")
                             return True
                         return False
-                    except Exception:
+                    except Exception as e:
+                        logging.warning(f"Error comparing '{src}' with incremental backup '{backup_file_path}': {e}. Trying older versions or main.")
                         continue
 
         main_path = os.path.join(self.main_backup_dir, rel_path)
@@ -137,13 +143,18 @@ class Daemon:
             try:
                 b_stat = os.stat(main_path)
                 if b_stat.st_size != current_stat.st_size or abs(b_stat.st_mtime - current_stat.st_mtime) > 1:
+                    logging.info(f"File '{rel_path}' updated (size/mtime mismatch with main backup {main_path}). Src size: {current_stat.st_size}, Dst size: {b_stat.st_size}. Src mtime: {current_stat.st_mtime}, Dst mtime: {b_stat.st_mtime}")
                     return True
                 if self.file_hash(src) != self.file_hash(main_path):
+                    logging.info(f"File '{rel_path}' updated (hash mismatch with main backup {main_path}).")
                     return True
-            except Exception:
+                return False # Explicitly return False if it matches the main backup
+            except Exception as e:
+                logging.warning(f"Error comparing '{src}' with main backup '{main_path}': {e}. Assuming update needed.")
                 return True
-
-        return False
+        # If no backup (main or incremental) exists, or if main backup comparison failed, it's considered new/updated.
+        logging.info(f"File '{rel_path}' is new or no existing valid backup was definitively matched. Marking for backup.")
+        return True # Default to True if no existing backup is found or if errors occurred in main comparison
 
     async def copy_file(self, src: str, dst: str, rel_path: str):
         async with self.copy_semaphore:
@@ -239,6 +250,9 @@ class Daemon:
 
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
                 os.replace(tmp_dst, dst)
+                # Preserve metadata (including mtime) from src to dst
+                await loop.run_in_executor(self.executor, shutil.copystat, src, dst)
+
                 logging.info(f"Backed up: {src} -> {dst}")
                 final_msg = {
                     "id": file_id, 
@@ -297,69 +311,91 @@ class Daemon:
         date_str = now.strftime('%d-%m-%Y')
         time_str = now.strftime('%H-%M')
         session_backup_dir = os.path.join(self.update_backup_dir, date_str, time_str)
-    
+
         logging.info("Starting scan and backup...")
 
-        with open(server.INTERRUPTED_MAIN, 'w') as f:
+        # Reload ignored folders and hidden items preference at the start of each scan
+        self.ignored_folders = set(os.path.abspath(p) for p in server.load_ignored_folders_from_config())
+        exclude_hidden_master_switch = server.get_database_value(section='EXCLUDE', option='exclude_hidden_itens')
+        if exclude_hidden_master_switch is None: # Default to True if not set
+            exclude_hidden_master_switch = True
+
+        with open(self.interruped_main_file, 'w') as f:
             f.write("interrupted")
-        
+
         for entry in os.scandir(self.user_home):
-            if entry.name.startswith('.') or entry.name in self.excluded_dirs:
+            if (exclude_hidden_master_switch and entry.name.startswith('.')) or \
+               entry.name in self.excluded_dirs:
                 continue
-    
+
             src_path = entry.path
             top_level_rel_path = os.path.relpath(src_path, self.user_home)
-    
+
             # Skip ignored folders
             if any(os.path.commonpath([src_path, ign]) == ign for ign in self.ignored_folders):
                 continue
-    
+
             cached_meta = self.load_folder_metadata(top_level_rel_path)
             new_meta = {}
-    
+
             for root, dirs, files in os.walk(src_path):
-                dirs[:] = [d for d in dirs if not d.startswith('.') and d not in self.excluded_dirs]
-    
+                # Filter directories based on hidden status and excluded_dirs
+                dirs[:] = [d for d in dirs if not ((exclude_hidden_master_switch and d.startswith('.')) or \
+                                                   d in self.excluded_dirs)]
+                send_to_ui(json.dumps({
+                    "type": "scanning",
+                    "folder": os.path.relpath(root, self.user_home).replace("\\", "/")
+                }))
                 subfolder_key = os.path.relpath(root, src_path).replace("\\", "/")
     
                 current_meta = compute_folder_metadata(
                     root,
-                    excluded_dirs=self.excluded_dirs,
-                    excluded_exts=self.excluded_exts
+                    # Pass effective excluded dirs and exts, respecting hidden switch for this computation
+                    excluded_dirs=self.excluded_dirs, # compute_folder_metadata handles its own dotfile logic if not overridden
+                    excluded_exts=self.excluded_exts  # compute_folder_metadata handles its own dotfile logic
                 )
                 new_meta[subfolder_key] = current_meta
-    
+
                 if not self.folder_needs_check(subfolder_key, current_meta, cached_meta):
                     continue
-    
+
                 for f in files:
-                    if f.startswith('.') or any(f.endswith(ext) for ext in self.excluded_exts):
+                    if (exclude_hidden_master_switch and f.startswith('.')) or \
+                       any(f.endswith(ext) for ext in self.excluded_exts):
                         continue
+
                     fsrc = os.path.join(root, f)
                     frel = os.path.relpath(fsrc, self.user_home)
                     main_path = os.path.join(self.main_backup_dir, frel)
-    
+
                     if not os.path.exists(main_path):
                         tasks.append(self.copy_file(fsrc, main_path, frel))
                     elif self.file_was_updated(fsrc, frel):
                         session_backup_path = os.path.join(session_backup_dir, frel)
                         tasks.append(self.copy_file(fsrc, session_backup_path, frel))
-    
+
             self.save_folder_metadata(top_level_rel_path, new_meta)
     
         if tasks:
             await asyncio.gather(*tasks)
             server.update_recent_backup_information()
+            # After backup tasks are complete, generate the summary
+            try:
+                # Assuming generate_backup_summary.py is in the same directory or on PATH
+                # and server.py is correctly imported there.
+                sub.run(['python3', os.path.join(os.path.dirname(__file__), 'generate_backup_summary.py')], check=True)
+            except Exception as e:
+                logging.error(f"Failed to generate backup summary: {e}")
             logging.info("Backup session complete.")
     
-        if os.path.exists(server.INTERRUPTED_MAIN):
-            os.remove(server.INTERRUPTED_MAIN)
+        if os.path.exists(self.interruped_main_file):
+            os.remove(self.interruped_main_file)
         
     async def resume_from_interruption(self):
-        if os.path.exists(server.INTERRUPTED_MAIN):
+        if os.path.exists(self.interruped_main_file):
             logging.info("Resuming from previous interrupted backup session...")
             await self.scan_and_backup()
-            os.remove(server.INTERRUPTED_MAIN)
+            os.remove(self.interruped_main_file)
 
     async def run(self):
         await self.resume_from_interruption()
@@ -401,13 +437,17 @@ class Daemon:
 
 if __name__ == "__main__":
     server = SERVER()
-    os.makedirs(os.path.dirname(server.LOG_FILE_PATH), exist_ok=True)
+
+    log_file_path = server.get_log_file_path()
+    if os.path.exists(log_file_path):
+        os.remove(log_file_path)
+    os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
     
     formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     
-    file_handler = logging.FileHandler(server.LOG_FILE_PATH)
+    file_handler = logging.FileHandler(log_file_path)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
     

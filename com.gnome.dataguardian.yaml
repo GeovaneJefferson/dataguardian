@@ -16,11 +16,6 @@ finish-args:
 
   # File access (host = full system; use with care)
   - --filesystem=host  # Needed for full backup access
-  - --filesystem=home
-  # If more security is desired, replace above with:
-  # - --filesystem=/home
-  - --filesystem=/run/media
-  - --filesystem=/mnt
 
   # Runtime socket (for daemon communication)
   - --filesystem=xdg-run/dataguardian:create  # Allow socket communication if used

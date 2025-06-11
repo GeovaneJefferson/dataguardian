@@ -1,0 +1,135 @@
+import os
+import json
+import math
+import logging
+from datetime import datetime
+from server import SERVER  # Assuming server.py is in the same directory or accessible
+
+server = SERVER()
+
+# Define file categories and their extensions (consistent with ui.py)
+FILE_CATEGORIES = {
+    "Image": {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg", ".tiff", ".ico"},
+    "Video": {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv", ".wmv"},
+    "Document": {".pdf", ".doc", ".docx", ".odt", ".xls", ".xlsx", ".ods", ".ppt", ".pptx", ".odp", ".txt", ".md", ".rtf", ".csv"},
+    # Add other categories as needed, e.g., Audio, Archive
+}
+
+def _format_size(size_bytes):
+    if size_bytes == 0:
+        return "0 B"
+    size_name = ("B", "KB", "MB", "GB", "TB")
+    i = int(math.floor(math.log(size_bytes, 1024)))
+    p = math.pow(1024, i)
+    s = round(size_bytes / p, 2)
+    return f"{s} {size_name[i]}"
+
+def _get_file_category(filename):
+    ext = os.path.splitext(filename)[1].lower()
+    for category, extensions in FILE_CATEGORIES.items():
+        if ext in extensions:
+            return category
+    return "Others"
+
+def generate_summary():
+    logging.info("Generating backup summary...")
+    backup_root = server.backup_folder_name()
+    summary_output_path: str = server.get_summary_filename()
+
+    category_stats = {
+        "Image": {"count": 0, "size": 0},
+        "Video": {"count": 0, "size": 0},
+        "Document": {"count": 0, "size": 0},
+        "Others": {"count": 0, "size": 0},
+    }
+
+    # --- Calculate Category Stats from Main Backup ---
+    main_backup_path = server.main_backup_folder()
+    if not os.path.exists(main_backup_path):
+        logging.warning(f"Main backup path {main_backup_path} not found. Cannot generate summary.")
+        # Save an empty or default summary
+        with open(summary_output_path, 'w') as f:
+            json.dump({"categories": [], "most_frequent_backups": [], "error": "Backup path not found"}, f, indent=4)
+        return
+
+    for root, _, files in os.walk(main_backup_path):
+        if os.path.basename(root).startswith('.'): # Basic hidden folder skip
+            continue
+        for filename in files:
+            if filename.startswith('.'): # Skip hidden files
+                continue
+            
+            file_path = os.path.join(root, filename)
+            try:
+                if os.path.isfile(file_path) and not os.path.islink(file_path):
+                    category = _get_file_category(filename)
+                    category_stats[category]["count"] += 1
+                    category_stats[category]["size"] += os.path.getsize(file_path)
+            except FileNotFoundError:
+                logging.warning(f"File not found during summary generation: {file_path}")
+                continue
+            except Exception as e:
+                logging.error(f"Error processing file {file_path} for summary: {e}")
+                continue
+
+    # --- Calculate Most Frequent Backups from Incremental Backups ---
+    file_backup_counts = {}
+    main_backup_folder_name = os.path.basename(main_backup_path)
+
+    if os.path.exists(backup_root):
+        for date_folder_name in os.listdir(backup_root):
+            date_folder_path = os.path.join(backup_root, date_folder_name)
+
+            # Skip the main backup folder and any non-directory entries
+            if date_folder_name == main_backup_folder_name or not os.path.isdir(date_folder_path):
+                continue
+
+            # Validate date folder format (optional but good practice)
+            try:
+                datetime.strptime(date_folder_name, "%d-%m-%Y")
+            except ValueError:
+                logging.warning(f"Skipping invalid date folder format: {date_folder_name}")
+                continue
+
+            for time_folder_name in os.listdir(date_folder_path):
+                time_folder_path = os.path.join(date_folder_path, time_folder_name)
+
+                # Skip non-directory entries
+                if not os.path.isdir(time_folder_path):
+                    continue
+
+                # Walk through the files in this specific time-stamped backup
+                for root, _, files in os.walk(time_folder_path):
+                    # Calculate the relative path from the time_folder_path
+                    rel_root_from_time_folder = os.path.relpath(root, time_folder_path)
+
+                    for filename in files:
+                        original_rel_path = os.path.join(rel_root_from_time_folder, filename)
+                        original_rel_path = original_rel_path.replace("\\", "/") # Normalize path separators
+                        file_backup_counts[original_rel_path] = file_backup_counts.get(original_rel_path, 0) + 1
+
+    # Sort files by backup count in descending order and select top N
+    sorted_files = sorted(file_backup_counts.items(), key=lambda item: item[1], reverse=True)
+    summary_data = []
+    for cat_name, data in category_stats.items():
+        summary_data.append(
+            {"name": cat_name,
+             "count": data["count"], 
+             "size_bytes": data["size"], 
+             "size_str": _format_size(data["size"])})
+
+    top_n = 5
+    most_frequent_backups = [{"path": path, "count": count} for path, count in sorted_files[:top_n]]
+
+    # Prepare final summary data structure
+    summary_output_data = {
+        "categories": summary_data,
+        "most_frequent_backups": most_frequent_backups
+    }
+    with open(summary_output_path, 'w') as f:
+        json.dump(summary_output_data, f, indent=4)
+    logging.info(f"Backup summary generated and saved to {summary_output_path}")
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+    generate_summary()

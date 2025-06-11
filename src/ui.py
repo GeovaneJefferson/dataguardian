@@ -10,17 +10,132 @@ try:
 except Exception:
     POPPLER_AVAILABLE = False
     print("Warning: Poppler not available — PDF preview disabled.")
+from gi.repository import GObject # Add this import
 
 server = SERVER()  # <-- Instantiate first!
+
+class DeviceSelectionWindow(Adw.Window):
+    __gsignals__ = {
+        'device-selection-changed': (GObject.SignalFlags.RUN_FIRST, None, (bool,))
+    }
+
+    def __init__(self, transient_for, **kwargs):
+        super().__init__(modal=True, transient_for=transient_for, **kwargs)
+        self.set_title("Select Backup Device")
+        self.set_default_size(400, 300)
+
+        self.parent_backup_window = transient_for
+        self.location_buttons = []
+
+        main_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.set_content(main_vbox)
+
+        header = Adw.HeaderBar()
+        main_vbox.append(header)
+
+        scrolled_window = Gtk.ScrolledWindow()
+        scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scrolled_window.set_vexpand(True)
+        main_vbox.append(scrolled_window)
+
+        self.devices_list_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.devices_list_box.set_margin_top(12)
+        self.devices_list_box.set_margin_bottom(12)
+        self.devices_list_box.set_margin_start(12)
+        self.devices_list_box.set_margin_end(12)
+        scrolled_window.set_child(self.devices_list_box)
+
+        self.select_button = Gtk.Button(label="Select")
+        self.select_button.add_css_class("suggested-action")
+        self.select_button.set_sensitive(False)
+        self.select_button.connect("clicked", self.on_select_clicked)
+        header.pack_end(self.select_button)
+
+        cancel_button = Gtk.Button(label="Cancel")
+        cancel_button.connect("clicked", lambda w: self.close())
+        header.pack_start(cancel_button)
+
+        self._populate_devices()
+        self._auto_select_saved_device()
+        
+    def _populate_devices(self):
+        # Clear old children
+        while True:
+            child = self.devices_list_box.get_first_child()
+            if not child:
+                break
+            self.devices_list_box.remove(child)
+        self.location_buttons.clear()
+
+        dev_loc = device_location()
+        if not dev_loc:
+            label = Gtk.Label(label="No mountable devices found in /media or /run/media.", xalign=0)
+            self.devices_list_box.append(label)
+            return
+            
+        users_devices_location = os.path.join(dev_loc, server.USERNAME)
+
+        if not os.path.exists(users_devices_location) or not os.listdir(users_devices_location):
+            label = Gtk.Label(label=f"No devices found in {users_devices_location}.", xalign=0)
+            self.devices_list_box.append(label)
+            return
+
+        for device_name in os.listdir(users_devices_location):
+            device_path = os.path.join(users_devices_location, device_name)
+            if os.path.isdir(device_path): # Ensure it's a directory
+                check = Gtk.CheckButton(label=device_path)
+                self.devices_list_box.append(check)
+                self.location_buttons.append(check)
+                check.connect("toggled", self._on_device_toggled, device_path)
+
+        if not self.location_buttons:
+            label = Gtk.Label(label="No backup devices found.", xalign=0)
+            self.devices_list_box.append(label)
+
+    def _on_device_toggled(self, toggled_button, device_path_for_button):
+        is_active = toggled_button.get_active()
+        if is_active:
+            for btn in self.location_buttons:
+                if btn != toggled_button:
+                    btn.set_active(False)
+        self.select_button.set_sensitive(is_active)
+
+    def on_select_clicked(self, button):
+        selected_path = None
+        selected_device_name = None
+        for btn in self.location_buttons:
+            if btn.get_active():
+                selected_path = btn.get_label()
+                selected_device_name = os.path.basename(selected_path)
+                break
+
+        server.set_database_value('DRIVER', 'driver_location', selected_path or "")
+        server.set_database_value('DRIVER', 'driver_name', selected_device_name or "")
+        
+        # Emit signal to notify parent window
+        self.emit("device-selection-changed", bool(selected_path))
+        self.close()
+
+    def _auto_select_saved_device(self):
+        saved_driver_location = server.get_database_value('DRIVER', 'driver_location')
+        if saved_driver_location:
+            for button in self.location_buttons:
+                if button.get_label() == saved_driver_location:
+                    button.set_active(True) # This will trigger _on_device_toggled
+                    self.select_button.set_sensitive(True)
+                    break
+
+    def do_close_request(self):
+        # Emit signal with False if window is closed without selection (e.g., Esc or Cancel)
+        if not any(btn.get_active() for btn in self.location_buttons):
+             self.emit("device-selection-changed", False)
+        return Adw.Window.do_close_request(self)
 
 
 class BackupWindow(Adw.ApplicationWindow):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.connect("close-request", self.on_main_window_close)
-        self.connect("map", self.on_window_map)
-
-        self.set_default_size(1280, 800)
+        self.set_default_size(1300, 800) # Adjusted width for the new panel
         self.set_title(server.APP_NAME)
 
         ##########################################################################
@@ -35,16 +150,21 @@ class BackupWindow(Adw.ApplicationWindow):
         self.files_loaded: bool = False
         self.pending_search_query: bool = None
         self.scan_files_folder_threaded()
-
+        self.thumbnail_cache = {} # For in-memory thumbnail caching
         self.ignored_folders = []
-
-        self.page_size = 28  # Number of results per page
+        self.page_size = 17  # Number of results per page
         self.current_page = 0  # Start from the first page
-
         self.search_results = []  # Store results based on filtering/searching
         self.date_combo = None  # To reference date combo in filtering
         self.search_timer = None  # Initialize in the class constructor
-        self.update_preview_window = None  # Add this in your __init__ if you want
+        self.folder_status_widgets = {} # To store icon widgets for top-level folders
+        self.currently_scanning_top_level_folder_name = None # Track which top-level folder is scanning
+        self.transfer_rows = {} # To track active transfers and their Gtk.ListBoxRow widgets
+
+        # Get exclude hidden items setting from the server 
+        self.exclude_hidden_itens: bool = server.get_database_value(
+            section='EXCLUDE',
+            option='exclude_hidden_itens')
         
         # Get stored driver_location and driver_name
         self.driver_location = server.get_database_value(
@@ -55,123 +175,78 @@ class BackupWindow(Adw.ApplicationWindow):
             section='DRIVER',
             option='driver_name')
         
-        # Create a vertical box to hold the HeaderBar at the top and the main content below it.
-        # This replaces the functionality of Adw.ToolbarView for older libadwaita versions.
-        main_layout_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        self.set_content(main_layout_box) # Set this box as the main content of the window
+        self.main_layout_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.set_content(self.main_layout_box)
 
-        # Adwaita 1.4+
-        # toolbar_view = Adw.ToolbarView()
-        # self.set_content(toolbar_view)
+        self._create_header_bar()
+        self._create_left_sidebar()
+        self._create_main_content()
+        self._set_initial_daemon_state_and_update_icon()
+    
+        self.populate_latest_backups()  # At startup populate with latest backups results
+        # self.update_overview_cards_from_summary() # Load summary data for overview cards
+        threading.Thread(target=self.start_server, daemon=True).start()  # Start the socket server in a separate thread
 
-        # header = Adw.HeaderBar()
-        # toolbar_view.add_top_bar(header)
+        # Grab searchbar focus on startup
+        self.search_entry.grab_focus()
 
-        # main_content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        # toolbar_view.set_content(main_content)
-
-        # Adwaita 1.4-
-        # Create the HeaderBar.
+    def _create_header_bar(self):
+        # Header Bar
         header = Adw.HeaderBar()
-        # header.set_title_widget(Gtk.Label(label="🛡️ Data Guardian", xalign=0))
-        main_layout_box.append(header) # Add the HeaderBar to the top of the main_layout_box.
+        self.main_layout_box.append(header)
 
-        # Create your main horizontal content box (this will contain your sidebar, center, and info panels).
-        # It's good practice to make this main_content box expand to fill available space.
+        # --- HeaderBar Left Content ---
+        add_device_button = Gtk.Button(icon_name="list-add-symbolic")
+        add_device_button.set_tooltip_text("Manage Backup Devices")
+        add_device_button.connect("clicked", self.on_devices_clicked)
+        header.pack_start(add_device_button)
+
+        # Settings Action
+        settings_action = Gio.SimpleAction.new("settings", None)
+        settings_action.connect("activate", self.on_settings_clicked)
+        self.add_action(settings_action)
+
+        # System Restore Action
+        restore_action = Gio.SimpleAction.new("systemrestore", None)
+        restore_action.connect("activate", self.on_restore_system_button_clicked)
+        self.add_action(restore_action)
+        restore_action.set_enabled(self.has_connection)
+
+        # Logs Action
+        logs_action = Gio.SimpleAction.new("logs", None)
+        logs_action.connect("activate", self.show_backup_logs_dialog)
+        self.add_action(logs_action)
+
+        # --- HeaderBar Right Content (Main Menu) ---
+        main_menu_button = Gtk.MenuButton(icon_name="open-menu-symbolic")
+        main_menu_button.set_tooltip_text("Main Menu")
+        header.pack_end(main_menu_button)
+
+        main_popover_menu = Gtk.PopoverMenu()
+        main_menu_button.set_popover(main_popover_menu)
+
+        menu_model = Gio.Menu()
+        menu_model.append("Logs", "win.logs")
+        menu_model.append("System Restore", "win.systemrestore")
+        menu_model.append("Settings", "win.settings")
+        main_popover_menu.set_menu_model(menu_model)
         main_content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        main_content.set_hexpand(True)
+        self.main_content = main_content # Store as instance variable
+        self.main_content.set_hexpand(True)
         main_content.set_vexpand(True)
-        main_layout_box.append(main_content) # Add main_content below the HeaderBar.
+        self.main_layout_box.append(main_content) # Add main_content below the HeaderBar.
 
-        # Sidebar
-        sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        sidebar.set_size_request(210, -1)
-        sidebar.set_margin_top(12)
-        sidebar.set_margin_bottom(12)
-        sidebar.set_margin_start(12)
-        sidebar.set_margin_end(12)
-
-        # Overview button with icon
-        overview_icon = Gtk.Image.new_from_icon_name("view-dashboard-symbolic")
-        overview_button = Gtk.Button()
-        overview_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        overview_box.set_halign(Gtk.Align.CENTER)
-        overview_box.set_valign(Gtk.Align.CENTER)
-        overview_icon.set_halign(Gtk.Align.CENTER)
-        overview_box.append(overview_icon)
-        overview_box.append(Gtk.Label(label="Overview"))
-        overview_button.set_child(overview_box)
-
-        # Devices button with icon
-        devices_icon = Gtk.Image.new_from_icon_name("drive-harddisk-symbolic")
-        self.devices_button = Gtk.Button()
-        devices_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        devices_box.set_halign(Gtk.Align.CENTER)
-        devices_box.set_valign(Gtk.Align.CENTER)
-        devices_icon.set_halign(Gtk.Align.CENTER)
-        devices_box.append(devices_icon)
-        devices_box.append(Gtk.Label(label="Devices"))
-        self.devices_button.set_child(devices_box)
-        
-        # Full Restore button with icon
-        restore_icon = Gtk.Image.new_from_icon_name("preferences-system-time-symbolic")
-        self.restore_system_button = Gtk.Button()
-        self.restore_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        self.restore_box.set_sensitive(self.has_connection)
-        self.restore_box.set_halign(Gtk.Align.CENTER)
-        self.restore_box.set_valign(Gtk.Align.CENTER)
-        restore_icon.set_halign(Gtk.Align.CENTER)
-        self.restore_box.append(restore_icon)
-        self.restore_box.append(Gtk.Label(label="System Restore"))
-        self.restore_system_button.set_tooltip_text("" \
-        "This is usually used to restore applications, flatpaks, file and folders after a clean system re/install.")
-        self.restore_system_button.set_child(self.restore_box)
-        self.restore_system_button.connect("clicked", self.on_restore_system_button_clicked)
-
-        # Settings button with icon
-        settings_icon = Gtk.Image.new_from_icon_name("preferences-system-symbolic")
-        settings_button = Gtk.Button()
-        settings_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        settings_box.set_halign(Gtk.Align.CENTER)
-        settings_box.set_valign(Gtk.Align.CENTER)
-        settings_icon.set_halign(Gtk.Align.CENTER)
-        settings_box.append(settings_icon)
-        settings_box.append(Gtk.Label(label="Settings"))
-        settings_button.set_child(settings_box)
-        settings_button.connect("clicked", self.on_settings_clicked)
-
-        spacer = Gtk.Box()
-        spacer.set_hexpand(False)
-        spacer.set_vexpand(True)
-
-        #sidebar.append(overview_button)
-        sidebar.append(self.devices_button)
-        sidebar.append(spacer)
-        sidebar.append(self.restore_system_button)
-        sidebar.append(settings_button)
-        main_content.append(sidebar)
-
-        self.devices_popover = Gtk.Popover()
-        self.devices_popover.set_parent(self.devices_button)
-        self.devices_popover_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        self.devices_popover.set_child(self.devices_popover_box)
-
-        # Center left panel
-        center_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+    def _create_main_content(self):
+        """Creates and populates the center panel."""
+        center_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0) # Changed spacing to 0
+        center_box.set_margin_top(0) # No top margin, header bar is separate
+        center_box.set_margin_bottom(12)
+        center_box.set_margin_start(6) # Margin from the new left sidebar
+        center_box.set_margin_end(12)   # Margin from the right window edge
         center_box.set_hexpand(True)
         center_box.set_vexpand(True)
         center_box.set_css_classes(["center-panel"])
         center_box.set_name("center-box")
-
-        self.search_entry = Gtk.SearchEntry()
-        self.search_entry.set_placeholder_text("Search file to restore...")
-        self.search_entry.set_margin_top(12)
-        self.search_entry.set_hexpand(True)
-        self.search_entry.set_sensitive(self.has_connection)
-        self.search_entry.connect("search-changed", self.on_search_changed)
-        center_box.append(self.search_entry)
-
-
         # filter_box = Gtk.Box(spacing=12)
         # filetype_combo = Adw.ComboRow(title="File Type", model=["All", ".txt", ".pdf", ".jpg"])
         # date_combo = Adw.ComboRow(title="Date Modified", model=["Any", "Today", "This Week", "This Month"])
@@ -179,8 +254,12 @@ class BackupWindow(Adw.ApplicationWindow):
         # filter_box.append(date_combo)
         # center_box.append(filter_box)
 
-        self.left_breadcrumbs = Gtk.Label(halign=Gtk.Align.START)
-        center_box.append(self.left_breadcrumbs)
+        # --- Latest Backups/Search Resulst Section ---
+        self.top_center_label = Gtk.Label(xalign=0)
+        self.top_center_label.add_css_class("title-3") # Ensure .title-3 is styled in your CSS
+        self.top_center_label.set_margin_top(12) # Space will be from previous section's bottom margin
+        self.top_center_label.set_margin_bottom(12) # Space between title and listbox
+        center_box.append(self.top_center_label)
 
         # Header grid
         left_column_titles = Gtk.Grid()
@@ -213,15 +292,6 @@ class BackupWindow(Adw.ApplicationWindow):
         left_column_titles.attach(date_header, 3, 0, 1, 1)
         #center_box.append(left_column_titles)
 
-        # Add a loading label to the center left box
-        self.loading_label = Gtk.Label(label=f"Searching for file...")
-        self.loading_label.set_hexpand(True)
-        self.loading_label.set_vexpand(True)
-        self.loading_label.set_halign(Gtk.Align.CENTER)
-        self.loading_label.set_valign(Gtk.Align.START)
-        center_box.append(self.loading_label)
-        self.loading_label.set_visible(False)  # Show at startup
-
         # ScrolledWindow for the ListBox
         scrolled_window = Gtk.ScrolledWindow()
         scrolled_window.set_hexpand(True)
@@ -230,293 +300,389 @@ class BackupWindow(Adw.ApplicationWindow):
 
         # Listbox for search results
         self.listbox = Gtk.ListBox()
+        self.listbox.add_css_class("overview-card")
         self.listbox.connect("row-selected", self.on_listbox_selection_changed)
 
-        key_controller = Gtk.EventControllerKey()
-        key_controller.connect("key-pressed", self.on_listbox_key_press)
-        self.listbox.add_controller(key_controller)
         scrolled_window.set_child(self.listbox) # Add ListBox to ScrolledWindow
         center_box.append(scrolled_window) # Add ScrolledWindow to center_box
-        main_content.append(center_box)
+        self.main_content.append(center_box)
 
-        # Right panel
-        info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        info_box.set_size_request(210, -1)
-        info_box.set_margin_top(12)
-        info_box.set_margin_bottom(12)
-        info_box.set_margin_start(12)
-        info_box.set_margin_end(12)
-        #info_box.add_css_class("card")
-        info_box.set_valign(Gtk.Align.START)
-
-        self.device_icon = Gtk.Image.new_from_icon_name("drive-harddisk-symbolic")
-        self.device_icon.set_pixel_size(48)
-        info_box.append(self.device_icon)
-
-        # Get the device name from the server
-        self.device_name: str = server.get_database_value(
-            section='DRIVER',
-            option='driver_name'
-        )
-        self.device_name_label = Gtk.Label(label=f"<b>{self.device_name}</b>" if self.device_name else "")
-        self.device_name_label.set_use_markup(True)
-        self.device_name_label.set_name("title-label")
-        self.device_name_label.set_halign(Gtk.Align.START)
-        info_box.append(self.device_name_label)
-
-        # Get users filesystem type
-        device = server.get_device_for_mountpoint(self.driver_location)
-        fs_type = server.get_filesystem_type(device) if device else "Unknown"
-
-        self.fs_type_label = Gtk.Label(label=f"<b>Type</b>: {fs_type}", xalign=0)
-        self.fs_type_label.set_use_markup(True)
-        info_box.append(self.fs_type_label)
-
-        # Get users device total and used size
-        total_size =  server.get_user_device_size(
-            self.driver_location, True) if os.path.exists(self.driver_location) else "None"
-        used_size = server.get_user_device_size(
-            self.driver_location, False) if os.path.exists(self.driver_location) else "None"
-
-        self.used_free_label = Gtk.Label(label=f"<b>Total:</b> {total_size}, <b>Used:</b> {used_size} ", xalign=0)
-        self.used_free_label.set_use_markup(True)
-        info_box.append(self.used_free_label)
-
-        ##################################################################
-        # Logs
-        ##################################################################
-        self.logs_label = Gtk.Label(xalign=0)
-        info_box.append(self.logs_label)
-
-        recent_backup_informations = server.get_database_value(
-			section='RECENT',
-			option='recent_backup_timeframe')
+    def _create_left_sidebar(self):
+        # Dynamic CSS provider for runtime styles (e.g., card accents, icon backgrounds)
+        # This should be in your __init__ if not already present.
+        if not hasattr(self, 'dynamic_css_provider'):
+            self.dynamic_css_provider = Gtk.CssProvider()
+            self._dynamic_rules_set = set() # To keep track of added rules and avoid duplicates
+            Gtk.StyleContext.add_provider_for_display(
+                Gdk.Display.get_default(),
+                self.dynamic_css_provider,
+                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+            )
+        # Ensure the helper method for adding dynamic CSS rules exists
+        if not hasattr(self, '_add_dynamic_css_rule'):
+            self._add_dynamic_css_rule = self._default_add_dynamic_css_rule_impl
         
-        if recent_backup_informations:
-            self.logs_label.set_use_markup(True)
-            self.logs_label.set_text("")
-            self.logs_label.set_markup(f"<b>Most Recent Backup:</b>\n{recent_backup_informations}")
-        else:
-            self.logs_label.set_use_markup(True)
-            self.logs_label.set_text("")
-            self.logs_label.set_markup("<b>Most Recent Backup:</b>\nNever")
+        left_sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
+        left_sidebar.set_size_request(240, -1) # Slightly wider for device info
+        left_sidebar.add_css_class("left-sidebar")
+        left_sidebar.set_margin_top(12)
+        left_sidebar.set_margin_bottom(12)
+        left_sidebar.set_margin_start(12) # Margin from left window edge
+        left_sidebar.set_margin_end(0)   # Small margin from center panel
+        left_sidebar.set_vexpand(True) # Allow vertical expansion
+        left_sidebar.set_hexpand(False) # Prevent vertical expansion
+        left_sidebar.set_valign(Gtk.Align.FILL) # Fill available vertical space
 
-        # Separator
-        separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
-        separator.set_margin_top(6)
-        separator.set_margin_bottom(6)
-        info_box.append(separator)
-        
-        # Restore progress bar
-        self.restore_progressbar = Gtk.ProgressBar()
-        #self.restore_progressbar.set_hexpand(True)
-        self.restore_progressbar.set_visible(False)
-        info_box.append(self.restore_progressbar)
+        # Search Entry - Moved to Left Sidebar
+        self.search_entry = Gtk.SearchEntry()
+        self.search_entry.set_placeholder_text("Search file to restore...")
+        self.search_entry.set_hexpand(True) # Allow it to take available horizontal space in sidebar
+        self.search_entry.set_sensitive(self.has_connection)
+        self.search_entry.connect("search-changed", self.on_search_changed)
+        self.search_entry.set_margin_top(0) # Add some space above the search bar
+        self.search_entry.set_margin_start(0)
+        self.search_entry.set_margin_end(0)   # Add some space on the right side
+        self.search_entry.set_margin_bottom(0) # Add some space below the search bar
+        left_sidebar.append(self.search_entry)
 
-        # Logs button with icon
-        logs_icon = Gtk.Image.new_from_icon_name("gnome-logs-symbolic")
-        logs_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        logs_box.set_halign(Gtk.Align.CENTER)
-        logs_box.set_valign(Gtk.Align.CENTER)
-        logs_icon.set_halign(Gtk.Align.CENTER)
-        logs_box.append(logs_icon)
-        logs_box.append(Gtk.Label(label="Logs"))
+        # Initialize attributes for scanning status and transfer list
+        self.current_scan_status_label = Gtk.Label(label="Scanning...")
+        self.current_scan_status_label.set_margin_top(6)
+        self.current_scan_status_label.set_margin_bottom(6)
+        self.current_scan_status_label.set_margin_start(6)
+        self.current_scan_status_label.set_margin_end(6)
+        self.current_scan_status_label.add_css_class("caption") # Make text smaller
+        self.current_scan_status_card = Adw.Clamp(child=self.current_scan_status_label) # Use Adw.Clamp or Gtk.Frame
+        self.current_scan_status_card.set_hexpand(False)
+        self.current_scan_status_card.set_maximum_size(200) # Adjust this value as needed
+        self.current_scan_status_card.set_css_classes(["card"]) # Optional: for styling
 
-        self.logs_button = Gtk.Button()
-        self.logs_button.set_child(logs_box)
-        self.logs_button.set_sensitive(bool(self.has_connection))
-        self.logs_button.set_hexpand(False)
-        self.logs_button.set_valign(Gtk.Align.CENTER)
-        self.logs_button.connect("clicked", self.show_backup_logs_dialog)
-        info_box.append(self.logs_button)
+        self.transfer_section_title_label = Gtk.Label(label="Active Transfers")
+        self.transfer_section_title_label.set_hexpand(False)
 
-        ##################################################################
-        # Open location button
-        ##################################################################
-        # Open location button with icon
-        open_icon = Gtk.Image.new_from_icon_name("document-open-symbolic")
-        open_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        open_box.set_halign(Gtk.Align.CENTER)
-        open_box.set_valign(Gtk.Align.CENTER)
-        open_icon.set_halign(Gtk.Align.CENTER)
-        open_box.append(open_icon)
-        open_box.append(Gtk.Label(label="Open File Location"))
-        self.open_location_button = Gtk.Button()
-        self.open_location_button.set_child(open_box)
-        self.open_location_button.set_sensitive(False)
-        info_box.append(self.open_location_button)
-
-        bubble_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        bubble_box.set_css_classes(["bubble"])
-        modified_label = Gtk.Label(label="Modified: 6 March 2025 10:25:33", xalign=0)
-        created_label = Gtk.Label(label="Created: 24 March 2024 15:15:44", xalign=0)
-        bubble_box.append(modified_label)
-        bubble_box.append(created_label)
-        #info_box.append(bubble_box)
-
-        # self.preview_scrolled = Gtk.ScrolledWindow()
-        # self.preview_scrolled.set_size_request(-1, 250)
-        # info_box.append(self.preview_scrolled)
-
-        # self.preview_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        # self.preview_scrolled.set_child(self.preview_container)
-        # self.current_preview_widget = None
-
-        # Find updates button with icon
-        find_icon = Gtk.Image.new_from_icon_name("edit-find-symbolic")
-        find_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        find_box.set_halign(Gtk.Align.CENTER)
-        find_box.set_valign(Gtk.Align.CENTER)
-        find_icon.set_halign(Gtk.Align.CENTER)
-        find_box.append(find_icon)
-        find_box.append(Gtk.Label(label="Find File Versions"))
-
-        self.find_updates = Gtk.Button()
-        self.find_updates.set_child(find_box)
-        self.find_updates.set_tooltip_text(
-            "Search for all available versions of the selected file, including the current and previous backups. "
-            "Use this to restore or review earlier versions of your file.")
-        self.find_updates.set_sensitive(False)
-        self.find_updates.set_hexpand(False)
-        self.find_updates.set_valign(Gtk.Align.CENTER)
-        self.find_updates.connect("clicked", lambda b: self.find_update(self.selected_file_path))
-        info_box.append(self.find_updates)
-
-        # Restore button
-        self.restore_button = Gtk.Button(label="Restore File")
-        self.restore_button.set_sensitive(False)
-        self.restore_button.set_hexpand(False)
-        self.restore_button.set_valign(Gtk.Align.CENTER)
-        self.restore_button.set_css_classes(["suggested-action"])
-        self.restore_button.connect("clicked", self.on_restore_button_clicked)
-        info_box.append(self.restore_button)
-        
-        # Separator
-        separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
-        separator.set_margin_top(6)
-        separator.set_margin_bottom(6)
-        info_box.append(separator)
-        
-        # Transfer ListBox
-        self.transfer_rows = {}  # file_id → BackupProgressRow
         self.transfer_listbox = Gtk.ListBox()
-        # self.transfer_listbox.set_vexpand(False) # vexpand defaults to False. ListBox will size to content.
-
-        # Wrap the ListBox in a ScrolledWindow to handle overflow
-        transfer_scrolled_window = Gtk.ScrolledWindow()
-        transfer_scrolled_window.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC) # No horizontal, auto vertical
-        transfer_scrolled_window.set_child(self.transfer_listbox)
+        self.transfer_listbox.set_vexpand(True) # Allow it to take available vertical space
+        self.transfer_listbox.add_css_class("card") # Apply card style to the ListBox
         
-        # Set a preferred height for the transfer area. If items exceed this, it will scroll.
-        # Adjust height as needed (e.g., to show 3-4 items by default).
-        transfer_scrolled_window.set_size_request(-1, 220) # e.g., height for about 3-4 rows
-        transfer_scrolled_window.set_vexpand(False) # The scrolled window itself should not expand vertically in info_box
+        self.transfer_listbox.set_margin_top(0) # No top margin, space will be from the header
+        self.transfer_listbox.set_margin_bottom(0)
+        self.transfer_listbox.set_margin_start(0)
+        self.transfer_listbox.set_margin_end(0)
+        self.transfer_listbox.set_hexpand(False)
 
-        info_box.append(transfer_scrolled_window)
-        main_content.append(info_box)
+        self.transfer_scrolled_window = Gtk.ScrolledWindow(child=self.transfer_listbox)
+        self.transfer_scrolled_window.set_hexpand(False) # Prevent it from taking all horizontal space
+        self.transfer_scrolled_window.set_vexpand(True)
+        self.transfer_scrolled_window.set_margin_top(0) # No top margin, space will be from the header
+        self.transfer_scrolled_window.set_margin_bottom(0)
+        self.transfer_scrolled_window.set_margin_start(0)
+        self.transfer_scrolled_window.set_margin_end(0)
 
-        # Spacer to push the restore button to the bottom
-        # spacer = Gtk.Box()
-        # spacer.set_hexpand(False)
-        # spacer.set_vexpand(True)
-        # info_box.append(spacer)
+        self.restore_progressbar = Gtk.ProgressBar()
+        self.restore_progressbar.set_hexpand(False) # Allow it to take available horizontal space
+        # Current Scan Status Card (initialized in __init__)
+        self.current_scan_status_card.set_margin_bottom(0)
+        self.current_scan_status_card.set_visible(False) # Initially hidden
 
-        ##########################################################################
-		# Connect signals
-		##########################################################################
-        self.open_location_button.connect("clicked", self.on_open_location_clicked)
-        self.devices_button.connect("clicked", self.on_devices_clicked)
+        # Transfer Section Title (initialized in __init__)
+        self.transfer_section_title_label.add_css_class("title-4")
+        self.transfer_section_title_label.set_xalign(0)
+        self.transfer_section_title_label.set_hexpand(False)
+        self.transfer_section_title_label.set_vexpand(False)
+        self.transfer_section_title_label.set_margin_top(0)
+        self.transfer_section_title_label.set_margin_bottom(0)
+        self.transfer_section_title_label.set_margin_start(0) # Align with the left sidebar
+        self.transfer_section_title_label.set_margin_end(0)
+        self.transfer_section_title_label.set_visible(False) # Initially hidden
+        left_sidebar.append(self.transfer_section_title_label)
+
+        # Transfer Scrolled Window (initialized in __init__)
+        self.transfer_scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        self.transfer_scrolled_window.set_min_content_height(200) # Example height
+        self.transfer_scrolled_window.set_hexpand(False)
+        self.transfer_scrolled_window.set_visible(False) # Initially hidden
+        left_sidebar.append(self.transfer_scrolled_window)
+
+        # Overall Usage
+        usage_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6) # Main container for this section
+        usage_box.set_margin_top(0) # No top margin, space will be from the header
+        usage_box.set_margin_bottom(0)
+        usage_box.set_margin_start(12) # No left margin, space will be from the left sidebar
+        usage_box.set_margin_end(12)
+        usage_box.set_hexpand(True) # Allow it to take available horizontal space
+        usage_box.set_vexpand(False)
+        # usage_box.add_css_class("card") # Add a card class for styling
         
-        ##########################################################################
-		# Startup actions
-		##########################################################################
-        self.add_found_devices_to_devices_popover_box()  # Add found devices to the popover
-        self.populate_latest_backups()  # At startup populate with latest backups results
-        # Start socket server in background
-        threading.Thread(target=self.start_server, daemon=True).start()  # Start the socket server in a separate thread
+        # --- Get device usage info ---
+        total_size_str = "N/A"
+        used_size_str = "N/A"
+        total_bytes = 0
+        used_bytes = 0
+        fraction = 0.0
+
+        if self.driver_location and os.path.exists(self.driver_location):
+            try:
+                total_bytes_val, used_bytes_val, _ = shutil.disk_usage(self.driver_location)
+                total_bytes = total_bytes_val
+                used_bytes = used_bytes_val
+                if total_bytes > 0:
+                    fraction = used_bytes / total_bytes
+                
+                total_size_str = server.get_user_device_size(self.driver_location, True)
+                used_size_str = server.get_user_device_size(self.driver_location, False)
+            except Exception as e:
+                print(f"Error getting disk usage for right sidebar: {e}")
+        # --- End get device usage info ---
+
+        # Detailed breakdown
+        details_list = Gtk.ListBox()
+        details_list.set_margin_top(0) # Space above the details list
+        details_list.set_margin_bottom(0) # Space below the details list
+        details_list.set_margin_start(0)
+        details_list.set_margin_end(0)
+        details_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        details_list.add_css_class("card")
+
+        # Define mappings for icons and colors
+        category_icons = {
+            "Image": "image-x-generic-symbolic",
+            "Video": "video-x-generic-symbolic",
+            "Document": "x-office-document-symbolic",
+            "Others": "application-x-addon-symbolic",
+            # Add more categories and their icons as needed
+        }
+        default_icon = "dialog-question-symbolic"
+
+        category_colors = {
+            "Image": "#EA4335",
+            "Video": "#4285F4",
+            "Document": "#34A853",
+            "Others": "#FBBC04",
+            # Add more categories and their colors as needed
+        }
+        default_color = "#9E9E9E"
+
+        items_from_summary = []
+        summary_file_path = server.get_summary_filename()
+
+        if os.path.exists(summary_file_path):
+            try:
+                with open(summary_file_path, 'r') as f:
+                    summary_data = json.load(f)
+                if "categories" in summary_data:
+                    for category_info in summary_data["categories"]:
+                        name = category_info.get("name", "Unknown")
+                        items_from_summary.append({
+                            "name": name,
+                            "icon_name": category_icons.get(name, default_icon),
+                            "color_hex": category_colors.get(name, default_color),
+                            "count": f"{category_info.get('count', 0)} files",
+                            "size": category_info.get("size_str", "0 B")
+                        })
+            except Exception as e:
+                print(f"Error loading or parsing summary file {summary_file_path}: {e}")
+
+        def _create_detail_row(name, icon_name, color_hex, count_str, size_str):
+            row = Gtk.ListBoxRow()
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5, margin_top=8, margin_bottom=8)
+
+            content_hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6) # Main horizontal container for the row content
+            content_hbox.set_margin_start(6) # Space from the left edge
+            content_hbox.set_margin_end(12) # Space from the right edge
+            content_hbox.set_hexpand(False) # Allow this to take available space
+            content_hbox.set_valign(Gtk.Align.CENTER) # Center align vertically within the row
+
+            # Icon with colored background
+            icon_bg = Gtk.Box()
+            # icon_bg.add_css_class("icon-bg") # General class for base styling
+            # icon_bg.set_size_request(32, 32) # Ensure a consistent size for the bg
+            icon_bg.set_valign(Gtk.Align.CENTER)
+            
+            # Adjust padding for detail row icons specifically if needed, or rely on .icon-bg
+            # For example, if .icon-bg padding is too large:
+            icon_bg.set_margin_start(6) # Custom padding
+            icon_bg.set_margin_end(6) # Space between icon_bg and name_label
+            icon_bg.set_margin_top(6)
+            icon_bg.set_margin_bottom(6)
+
+            icon = Gtk.Image.new_from_icon_name(icon_name)
+            icon.set_pixel_size(16) # Smaller icon for rows
+            icon_bg.append(icon)
+            content_hbox.append(icon_bg)
+
+            # Dynamic CSS for icon background color
+            icon_bg_class_name = f"dyn-icon-bg-{color_hex.replace('#', '')}"
+            icon_bg_css_rule = f""".{icon_bg_class_name} {{
+                background-color: alpha({color_hex}, 0.15);
+                border-radius: 6px; /* Slightly smaller radius for smaller icon */
+                padding: 6px; /* Smaller padding for row icons */
+            }}"""
+            self._add_dynamic_css_rule(icon_bg_css_rule)
+            icon_bg.add_css_class(icon_bg_class_name)
+            
+            # Vertical box for Name and Count
+            name_and_count_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0) # No spacing for tight stacking
+            name_and_count_vbox.set_valign(Gtk.Align.CENTER) # Align this vbox vertically with the icon
+            name_and_count_vbox.set_hexpand(True) # Allow this to take available space
+
+            name_label = Gtk.Label(label=name)
+            name_label.set_xalign(0) # Align left
+            name_and_count_vbox.append(name_label)
+
+            count_label = Gtk.Label(label=count_str)
+            count_label.add_css_class("dim-label")
+            count_label.set_xalign(0) # Align left
+            name_and_count_vbox.append(count_label)
+
+            content_hbox.append(name_and_count_vbox)
+            
+            size_label = Gtk.Label(label=size_str)
+            size_label.set_halign(Gtk.Align.END)
+            # size_label.set_hexpand(True) # No longer needed as name_and_count_vbox expands
+            size_label.set_valign(Gtk.Align.CENTER)
+            content_hbox.append(size_label)
+            box.append(content_hbox)
+            row.set_child(box)
+            row.set_activatable(False)
+            return row
+
+        if not items_from_summary: # Fallback or empty state
+            details_list.append(_create_detail_row("No summary data", default_icon, default_color, "0 files", "0 B"))
+        else:
+            for item_data in items_from_summary:
+                details_list.append(_create_detail_row(item_data["name"], item_data["icon_name"], item_data["color_hex"], item_data["count"], item_data["size"]))
+        
+
+        # This widget will take up all the extra space
+        spacer = Gtk.Box()
+        spacer.set_vexpand(True)
+
+        # Horizontal Box for Device Name and Status Icon
+        device_name_and_status_hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        # Margins from original device_name_label, applied to the HBox
+        device_name_and_status_hbox.set_margin_start(6)
+        device_name_and_status_hbox.set_margin_bottom(4) # Space before progress bar
+
+        left_sidebar.append(spacer)
+        
+        # Status Icon
+        self.status_icon = Gtk.Image()
+        self.status_icon.set_pixel_size(16) # Consistent icon size
+        self.current_daemon_state = "idle" # Initial state, will be updated
+
+        # Device Name Label
+        device_name_label_text = self.driver_name if self.driver_name else "N/A"
+        device_name_label = Gtk.Label(label=device_name_label_text)
+        device_name_label.add_css_class("title-4") # Or "caption" or other appropriate style
+        device_name_label.set_xalign(0) # Align text to the left within its allocation
+        device_name_label.set_hexpand(True) # Allow label to take available space
+        device_name_and_status_hbox.append(device_name_label)
+
+        # Status Icon (already initialized in __init__)
+        self.status_icon.set_valign(Gtk.Align.CENTER) # Vertically align with the device name
+        device_name_and_status_hbox.append(self.status_icon)
+        usage_box.append(device_name_and_status_hbox)
+
+        # Progress bar first
+        progress_bar = Gtk.ProgressBar(fraction=fraction)
+        progress_bar.set_margin_start(6) # Add some horizontal margin
+        progress_bar.set_margin_end(6)   # Add some horizontal margin
+        usage_box.append(progress_bar)
+        
+        # Combined usage label
+        combined_usage_label = Gtk.Label(label=f"{used_size_str} of {total_size_str}")
+        combined_usage_label.add_css_class("caption") # Make text smaller
+        combined_usage_label.set_xalign(0) # Align left
+        combined_usage_label.set_margin_start(6) # Match progress bar margin
+        combined_usage_label.set_margin_end(6)   # Match progress bar margin
+        combined_usage_label.set_margin_top(2) # Small space between progress bar and label
+        usage_box.append(combined_usage_label)
+
+        # Add the restore progress bar to the usage_box
+        # self.restore_progressbar.set_hexpand(True)
+        self.restore_progressbar.set_margin_top(6) # Add some space above the progress bar
+        self.restore_progressbar.set_visible(False) # Initially hidden
+        usage_box.append(self.restore_progressbar)
+
+        left_sidebar.append(details_list)
+        left_sidebar.append(self.current_scan_status_card)
+        left_sidebar.append(usage_box)
+
+        self.folder_scan_status_box = left_sidebar # Keep reference if needed elsewhere
+        self.main_content.append(left_sidebar) # Add to the main horizontal box
+
+    # Helper method to add dynamic CSS rules (should be part of BackupWindow class)
+    # This is a default implementation if you don't have one.
+    def _default_add_dynamic_css_rule_impl(self, rule_string):
+        if rule_string not in self._dynamic_rules_set:
+            self._dynamic_rules_set.add(rule_string)
+            # GTK4 load_from_data expects bytes
+            self.dynamic_css_provider.load_from_data("\n".join(self._dynamic_rules_set).encode('utf-8'))
+
+    ##########################################################################
+    # UI VISIBILITY
+    ##########################################################################
+    def _update_left_panel_visibility(self):
+        # Check if folder scanning is active or has items
+        # The visibility of current_scan_status_card is handled directly in update_scanning_folder_display
+
+        has_file_transfers = bool(self.transfer_listbox.get_first_child())
+
+        # The main panel (self.folder_scan_status_box) is always visible.
+        # We only toggle visibility of its internal sections.
+        # The current_scan_status_card visibility is managed by update_scanning_folder_display
+
+        self.transfer_section_title_label.set_visible(has_file_transfers)
+        self.transfer_scrolled_window.set_visible(has_file_transfers)
 
     ##########################################################################
     # BACKUP
     ##########################################################################
-    def add_found_devices_to_devices_popover_box(self):
-        # Clear old children
-        while True:
-            child = self.devices_popover_box.get_first_child()
-            if not child:
-                break
-            self.devices_popover_box.remove(child)
- 
-        # Clear old buttons
-        self.location_buttons.clear()
-
-        # Get all devices locations from media or run e.g: /media/username/BACKUP or /run/username/BACKUP
-        users_devices_location = os.path.join(device_location(), server.USERNAME)
-
-        # Loop through all devices locations
-        for device in os.listdir(users_devices_location):
-            device_path = os.path.join(users_devices_location, device)
-            check = Gtk.CheckButton(label=device_path)
-            self.devices_popover_box.append(check)
-            self.location_buttons.append(check)
-
-            check.connect("toggled", lambda button: self.on_toggled(button, device_path))
-            print("Found device location:", device_path)
-
-        if not self.location_buttons:
-            # If no devices found, show a label
-            label = Gtk.Label(label="No backup devices found", xalign=0)
-            self.devices_popover_box.append(label)
-
-    def on_toggled(self, button, device_path):
-        if button.get_active():
-            self.enable_ui_stuff(True) # Enable UI stuff if a device is selected
-            print("Selected device path:", device_path)
-            for other in self.location_buttons:
-                if other != button:
-                    other.set_active(False)
-
-            # Save to config/database here if needed
-            server.set_database_value(
-                section='DRIVER',
-                option='driver_location',
-                value=str(button.get_label())
-            )
-            server.set_database_value(
-                section='DRIVER',
-                option='driver_name',
-                value=str(device_path.split("/")[-1])
-            )
-        else:
-            print("Deselected device path:", device_path)
-            self.enable_ui_stuff(False) # Disable UI stuff if a device is selected
-            # User deselected all devices, clear the config
-            server.set_database_value(
-                section='DRIVER',
-                option='driver_location',
-                value=""
-            )
-            server.set_database_value(
-                section='DRIVER',
-                option='driver_name',
-                value=""
-            )
-
     def on_devices_clicked(self, button):
-        if self.devices_popover.get_visible():
-            self.devices_popover.popdown()
-        else:
-            self.automacatically_selected_saved_backup_device()  # Auto-select saved device
-            self.devices_popover.popup()
+        # Create and present the modal device selection window
+        device_selection_win = DeviceSelectionWindow(transient_for=self, application=self.get_application())
+        device_selection_win.present()
 
-    def automacatically_selected_saved_backup_device(self):
-        # Iterate through location_buttons to find a match and set it active
-        for button in self.location_buttons:
-            label = button.get_label()
-            if label == f"{self.driver_location}":
-                button.set_active(True)
-                print("Auto-selected backup device:", label)
-                self.enable_ui_stuff(True) # Enable UI stuff if a device is selected
-                break
+        # Connect to a custom signal to know when a device is selected or window closed
+        device_selection_win.connect("device-selection-changed", self._on_device_selection_changed_from_modal)
+
+    def _on_device_selection_changed_from_modal(self, modal_window, device_selected):
+        self.has_connection = has_driver_connection() # Re-check connection status
+        self.driver_location = server.get_database_value(section='DRIVER', option='driver_location')
+        self.driver_name = server.get_database_value(section='DRIVER', option='driver_name')
+        self.enable_ui_stuff(device_selected)
+        # Update daemon state based on new connection status
+        self._set_initial_daemon_state_and_update_icon()
+        
+    def _set_initial_daemon_state_and_update_icon(self):
+        if not self.has_connection:
+            self.current_daemon_state = "disconnected"
+        elif os.path.exists(server.get_interrupted_main_file()):
+            self.current_daemon_state = "interrupted"
+        else:
+            self.current_daemon_state = "idle"
+        GLib.idle_add(self._update_status_icon_display)
+
+    def _update_status_icon_display(self):
+        icon_name = "dialog-information-symbolic" # Default: idle
+        tooltip = "Monitoring for file changes. Waiting for next backup cycle."
+
+        if self.current_daemon_state == "disconnected":
+            icon_name = "network-offline-symbolic"
+            tooltip = "Backup device not connected."
+        elif self.current_daemon_state == "interrupted":
+            icon_name = "dialog-warning-symbolic"
+            tooltip = "Interrupted backup pending. Daemon will attempt to resume."
+        elif self.current_daemon_state == "scanning":
+            icon_name = "view-refresh-symbolic" # Or "system-search-symbolic"
+            tooltip = "Scanning files for backup..."
+        elif self.current_daemon_state == "copying":
+            icon_name = "emblem-synchronizing-symbolic" # Or "media-floppy-symbolic"
+            tooltip = "Backing up files..."
+        # "idle" uses the default icon_name and tooltip
+
+        self.status_icon.set_from_icon_name(icon_name)
+        self.status_icon.set_tooltip_text(tooltip)
 
     def enable_ui_stuff(self, state:bool):   
         """
@@ -526,31 +692,24 @@ class BackupWindow(Adw.ApplicationWindow):
         # Already a backup made and has connection
         if os.path.exists(server.backup_folder_name()) and self.has_connection:
             # Enable stuff if has connection to backup device
-            self.restore_system_button.set_sensitive(state)
             self.search_entry.set_sensitive(state)
 
     def on_listbox_selection_changed(self, listbox, row):
-        self.restore_button.set_sensitive(row is not None)
-        self.find_updates.set_sensitive(row is not None)
-        self.open_location_button.set_sensitive(row is not None)
-        self.left_breadcrumbs.set_label("")  # Clear the label
-
         if row:
             path: str = getattr(row, "device_path", None)
-            self.selected_file_path = path  # ← Store the full path
-            self.left_breadcrumbs.set_label(path.replace(server.backup_folder_name(), "").lstrip(os.sep))
+            self.selected_file_path = path
             self.selected_item_size = server.get_item_size(path, True)
-            print("Selected item path:", path)
         else:
-            self.device_name_label.set_text("")
-            #self.clear_preview()
             self.selected_file_path = None
 
     def populate_latest_backups(self):
+        self.top_center_label.set_text("Latest Backups")
+
         # Show latest backup files on startup
         latest_files = self.get_latest_backup_files()
         if latest_files:
             for f in latest_files:
+                print(f)  # Debug: print the file paths
                 pass
             # Optionally, populate your listbox or UI with these files
             self.populate_results([{"name": os.path.basename(f), "path": f, "date": os.path.getmtime(f)} for f in latest_files])
@@ -591,11 +750,66 @@ class BackupWindow(Adw.ApplicationWindow):
                     size = msg.get("size", "0 KB")
                     eta = msg.get("eta", "n/a")
                     progress = msg.get("progress", 0.0)
+                    
+                    current_state_before_message = self.current_daemon_state
+                    msg_type = msg.get("type")
 
-                    GLib.idle_add(self.update_or_create_transfer, file_id, filename, size, eta, progress)
+                    if msg_type == "scanning":
+                        folder_being_scanned = msg.get("folder") # Can be None
+                        if folder_being_scanned:
+                            self.current_daemon_state = "scanning"
+                        else: # Scanning phase ended for this top-level folder or all
+                            if not self.transfer_rows: # Check if any transfers are ongoing
+                                if os.path.exists(server.get_interrupted_main_file()):
+                                    self.current_daemon_state = "interrupted"
+                                else:
+                                    self.current_daemon_state = "idle"
+                            # If transfers are active, state will become "copying" from transfer messages
+                        GLib.idle_add(self.update_scanning_folder_display, folder_being_scanned)
+                    else: # Default to transfer update
+                        self.current_daemon_state = "copying"
+                        GLib.idle_add(self.update_or_create_transfer, file_id, filename, size, eta, progress)
+                        # When transfers start, imply scanning of current top-level folder is done or all scans are done.
+                        # GLib.idle_add(self._update_folder_scan_status_display, None) # This might be too aggressive
+                        # GLib.idle_add(self.update_scanning_folder_display, None) # Signal scan phase might be ending for current folder
+
+                    if current_state_before_message != self.current_daemon_state:
+                        GLib.idle_add(self._update_status_icon_display)
+
+                    GLib.idle_add(self._update_left_panel_visibility)
                 except Exception as e:
                     print("Socket error:", e)
+                    
+    def update_scanning_folder_display(self, folder_path_from_daemon): # Renaming parameter to match usage
+        """Updates the folder scanning status display in the center panel."""
+        if folder_path_from_daemon:
+            # Extract the top-level folder name from the path
+            parts = folder_path_from_daemon.split(os.sep)
+            top_level_folder_name = parts[0] if parts else folder_path_from_daemon
+            self.current_scan_status_label.set_text(f"Scanning: {top_level_folder_name}")
+            self.current_scan_status_card.set_visible(True)
+            self.currently_scanning_top_level_folder_name = top_level_folder_name
+        else:
+            self.current_scan_status_card.set_visible(False)
+            self.currently_scanning_top_level_folder_name = None
+        
+        self._update_left_panel_visibility()
 
+
+    def _populate_folder_status_list(self):
+        """
+        This method is now largely obsolete as the folder status listbox
+        has been replaced by a single card showing the current scanning folder.
+        It's kept for now in case some initial "waiting" state is desired,
+        but for the current request, it does nothing.
+        """
+        if not self.has_connection:
+            # self.current_scan_status_label.set_text("No connection to backup device.")
+            # self.current_scan_status_card.set_visible(True) # Or false, depending on desired UX
+            return
+        # If no specific folder is scanning yet, the card remains hidden by default.
+        self._update_left_panel_visibility()
+    
     def update_or_create_transfer(self, file_id, filename, size, eta, progress):
         if file_id not in self.transfer_rows:
             # Create the content widget (your BackupProgressRow)
@@ -620,8 +834,21 @@ class BackupWindow(Adw.ApplicationWindow):
             content_widget_to_update.update(size, eta, progress)
  
         if progress >= 1.0: # If this item just completed
-            self.prune_completed_transfers_display()
+            # Remove immediately
+            if listbox_row_to_update and listbox_row_to_update.get_parent() == self.transfer_listbox:
+                self.transfer_listbox.remove(listbox_row_to_update)
+            if file_id in self.transfer_rows:
+                del self.transfer_rows[file_id]
+        self._update_left_panel_visibility()
 
+        if progress >= 1.0 and not self.transfer_rows: # If this was the last transfer
+            new_final_state = "idle"
+            if os.path.exists(server.get_interrupted_main_file()):
+                new_final_state = "interrupted"
+            if self.current_daemon_state != new_final_state:
+                self.current_daemon_state = new_final_state
+                GLib.idle_add(self._update_status_icon_display) # Update icon
+                
     ##########################################################################
     # Backup
     ##########################################################################
@@ -674,112 +901,288 @@ class BackupWindow(Adw.ApplicationWindow):
                 backup_files.append(os.path.join(root, file))
         return backup_files
 
-    def prune_completed_transfers_display(self):
-        """
-        Ensures that only the latest 4 completed transfer items are shown in the listbox.
-        Older completed items are removed.
-        """
-        all_listbox_rows_from_widget = []
-        child_row_widget = self.transfer_listbox.get_first_child()
-        while child_row_widget:
-            all_listbox_rows_from_widget.append(child_row_widget)
-            child_row_widget = child_row_widget.get_next_sibling()
+    def open_modal_preview_window(self, filepath):
+        if not filepath or not os.path.exists(filepath):
+            dialog = Adw.MessageDialog(transient_for=self, modal=True,
+                                       title="Preview Error",
+                                       body="File not found or path is invalid.")
+            dialog.add_response("ok", "OK")
+            dialog.connect("response", lambda d, r: d.close())
+            dialog.present()
+            return
 
-        completed_row_widgets_in_listbox = []
-        for row_widget in all_listbox_rows_from_widget:
-            content_widget = row_widget.get_child()
-            if isinstance(content_widget, BackupProgressRow) and \
-               content_widget.progress.get_fraction() >= 1.0:
-                completed_row_widgets_in_listbox.append(row_widget)
-        
-        num_to_prune = len(completed_row_widgets_in_listbox) - 4
-        
-        if num_to_prune > 0:
-            # Prune the oldest 'num_to_prune' completed items.
-            # These are at the beginning of completed_row_widgets_in_listbox
-            # because it reflects the order in the Gtk.ListBox.
-            for i in range(num_to_prune):
-                row_widget_to_remove = completed_row_widgets_in_listbox[i]
-                
-                file_id_to_remove = next((fid for fid, lr_widget in self.transfer_rows.items() if lr_widget == row_widget_to_remove), None)
-                
-                if file_id_to_remove:
-                    self.transfer_rows.pop(file_id_to_remove, None)
-                
-                if row_widget_to_remove.get_parent() == self.transfer_listbox:
-                    self.transfer_listbox.remove(row_widget_to_remove)
-    
-    # def clear_preview(self):
-    #     if self.current_preview_widget:
-    #         self.preview_container.remove(self.current_preview_widget)
-    #         self.current_preview_widget = None
+        preview_widget = None
+        ext = os.path.splitext(filepath)[1].lower()
+        mime, _ = mimetypes.guess_type(filepath)
+        if mime is None: mime = ""
 
-    # def show_preview(self, filepath):
-    #     #self.clear_preview()
-    #     if not filepath:
-    #         self.show_no_preview()
-    #         return
+        if (ext == ".pdf" or mime == "application/pdf") and POPPLER_AVAILABLE:
+            preview_widget = self._create_pdf_preview_widget(filepath)
+        elif (ext in server.TEXT_EXTENSIONS or mime.startswith("text")):
+            preview_widget = self._create_text_preview_widget(filepath)
+        elif (ext in server.IMAGE_EXTENSIONS or mime.startswith("image")):
+            preview_widget = self._create_image_preview_widget(filepath)
 
-    #     ext = os.path.splitext(filepath)[1].lower()
-    #     mime, _ = mimetypes.guess_type(filepath)
-    #     if mime is None:
-    #         mime = ""
+        # Create Modal Window
+        modal_preview_win = Adw.Window(transient_for=self, modal=True)
+        modal_preview_win.set_title(f"Preview: {os.path.basename(filepath)}")
+        modal_preview_win.set_default_size(700, 600)
+        modal_preview_win.set_destroy_with_parent(True)
 
-    #     # If file doesn't exist, simulate preview
-    #     file_exists = os.path.exists(filepath)
+        # Create a main vertical box for the modal window's content
+        modal_main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
 
-    #     if (ext == ".pdf" or mime == "application/pdf") and POPPLER_AVAILABLE and file_exists:
-    #         self.show_pdf_preview(filepath)
-    #     elif (ext == ".txt" or mime.startswith("text")) and file_exists:
-    #         self.show_text_preview(filepath)
-    #     else:
-    #         self.show_no_preview()
+        header = Adw.HeaderBar()
+        modal_main_box.append(header) # Add header to the main box
+
+        # Scrolled window for the preview content
+        scrolled_window = Gtk.ScrolledWindow()
+        scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scrolled_window.set_vexpand(True)
+        scrolled_window.set_hexpand(True)
+        modal_main_box.append(scrolled_window) # Add scrolled_window to the main box
+
+        if preview_widget:
+            scrolled_window.set_child(preview_widget)
+        else:
+            label = Gtk.Label(label="No preview available for this file type or an error occurred.")
+            label.set_wrap(True)
+            label.set_xalign(0.5)
+            label.set_valign(Gtk.Align.CENTER)
+            scrolled_window.set_child(label)
+
+        modal_preview_win.set_content(modal_main_box) # Set the main box as the window's content
+        modal_preview_win.present()
+
+    def _create_pdf_preview_widget(self, filepath):
+        try:
+            document = Poppler.Document.new_from_file(f"file://{filepath}", None)
+            page = document.get_page(0) # Preview first page
+            width, height = page.get_size()
+            
+            # Determine a reasonable max width/height for the preview in the modal
+            # This is a bit arbitrary, could be based on modal window size later
+            # For now, let's aim for a max width like 600px.
+            target_preview_width = 600 
+
+            scale = target_preview_width / width if width > 0 else 1.0
+            # If scaling makes it too tall, scale by height instead
+            # (e.g. if modal height is constrained, but for now we don't know modal height yet)
+            # For simplicity, we'll just scale by width for now.
+
+            surf_width = int(width * scale)
+            surf_height = int(height * scale)
+
+            surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, surf_width, surf_height)
+            cr = cairo.Context(surface)
+            cr.save() 
+            cr.set_source_rgb(1, 1, 1)  # White background
+            cr.paint()
+            cr.restore() 
+            cr.scale(scale, scale)
+            page.render(cr)
+            surface.flush()
+
+            pixbuf = Gdk.pixbuf_get_from_surface(surface, 0, 0, surf_width, surf_height)
+            image = Gtk.Image.new_from_pixbuf(pixbuf)
+            image.set_vexpand(True) 
+            image.set_hexpand(True)
+            return image
+        except Exception as e:
+            print(f"Failed to create PDF preview widget for {filepath}: {e}")
+            return None
+
+    def _create_text_preview_widget(self, filepath):
+        try:
+            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                text = f.read(16384) # Read up to 16KB for preview
+            textview = Gtk.TextView()
+            textview.set_editable(False)
+            textview.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+            textview.get_buffer().set_text(text)
+            textview.set_vexpand(True) 
+            textview.set_hexpand(True)
+            return textview
+        except Exception as e:
+            print(f"Failed to create text preview widget for {filepath}: {e}")
+            return None
+
+    def _create_image_preview_widget(self, filepath):
+        try:
+            picture = Gtk.Picture.new_for_filename(filepath)
+            picture.set_content_fit(Gtk.ContentFit.CONTAIN) 
+            picture.set_vexpand(True) 
+            picture.set_hexpand(True)
+            return picture
+        except Exception as e:
+            print(f"Failed to create image preview widget for {filepath}: {e}")
+            return None
+
+    # Methods show_pdf_preview, show_text_preview, show_image_preview are replaced by _create_..._widget methods
+    # and open_modal_preview_window.
+    # The old show_no_preview and clear_preview are also no longer needed for inline preview.
 
     # def show_pdf_preview(self, filepath):
     #     try:
     #         document = Poppler.Document.new_from_file(f"file://{filepath}", None)
-    #         page = document.get_page(0)
+    #         page = document.get_page(0) # Preview first page
     #         width, height = page.get_size()
+    #         # Scale to fit preview area (e.g., max width 200px, adjust as needed)
+    #         # This is a simple scaling, more sophisticated logic might be needed
+    #         preview_width = self.preview_scrolled_window.get_allocated_width() - 20 # Account for padding
+    #         if preview_width <= 0: preview_width = 300 # Fallback
 
-    #         scale = 0.3
+    #         scale = preview_width / width if width > 0 else 1.0
     #         surf_width = int(width * scale)
     #         surf_height = int(height * scale)
-
     #         surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, surf_width, surf_height)
     #         cr = cairo.Context(surface)
+    #         cr.save() # Save context
+    #         cr.set_source_rgb(1, 1, 1)  # White background
+    #         cr.paint()
+    #         cr.restore() # Restore context
     #         cr.scale(scale, scale)
     #         page.render(cr)
     #         surface.flush()
-
     #         pixbuf = Gdk.pixbuf_get_from_surface(surface, 0, 0, surf_width, surf_height)
-
     #         image = Gtk.Image.new_from_pixbuf(pixbuf)
-    #         self.preview_container.append(image)
+    #         image.set_vexpand(False) # Don't let image itself expand beyond its size
+    #         image.set_hexpand(False)
+    #         self.preview_scrolled_window.set_child(image)
     #         self.current_preview_widget = image
+    #         return True # Indicate success
     #     except Exception as e:
-    #         print("Failed to load PDF preview:", e)
-    #         self.show_no_preview()
+    #         print(f"Failed to load PDF preview for {filepath}: {e}")
+    #         self.show_no_preview(f"Error loading PDF: {e}")
+    #         return False # Indicate failure
 
     # def show_text_preview(self, filepath):
     #     try:
-    #         with open(filepath, "r", encoding="utf-8") as f:
-    #             text = f.read(4096)
+    #         with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+    #             text = f.read(8192) # Read up to 8KB for preview
     #         textview = Gtk.TextView()
     #         textview.set_editable(False)
-    #         textview.set_wrap_mode(Gtk.WrapMode.WORD)
+    #         textview.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
     #         textview.get_buffer().set_text(text)
-    #         textview.set_size_request(-1, 250)
-    #         self.preview_container.append(textview)
+    #         textview.set_vexpand(True) # TextView should expand
+    #         textview.set_hexpand(True)
+    #         self.preview_scrolled_window.set_child(textview)
     #         self.current_preview_widget = textview
+    #         return True # Indicate success
     #     except Exception as e:
-    #         print("Failed to load text preview:", e)
-    #         self.show_no_preview()
+    #         print(f"Failed to load text preview for {filepath}: {e}")
+    #         self.show_no_preview(f"Error loading text: {e}")
+    #         return False # Indicate failure
 
-    # def show_no_preview(self):
-    #     label = Gtk.Label(label="No preview available")
-    #     self.preview_container.append(label)
+    # def show_image_preview(self, filepath):
+    #     try:
+    #         picture = Gtk.Picture.new_for_filename(filepath)
+    #         picture.set_content_fit(Gtk.ContentFit.CONTAIN) # Scale down to fit, preserve aspect ratio
+    #         picture.set_vexpand(True) # Picture should expand within scrolled window
+    #         picture.set_hexpand(True)
+    #         self.preview_scrolled_window.set_child(picture)
+    #         self.current_preview_widget = picture
+    #         return True # Indicate success
+    #     except Exception as e:
+    #         print(f"Failed to load image preview for {filepath}: {e}")
+    #         self.show_no_preview(f"Error loading image: {e}")
+    #         return False # Indicate failure
+
+    # def show_no_preview(self, message="No preview available."):
+    #     self.clear_preview()
+    #     label = Gtk.Label(label=message)
+    #     label.set_wrap(True)
+    #     label.set_xalign(0.5)
+    #     label.set_valign(Gtk.Align.CENTER)
+    #     # label.set_vexpand(True) # The label itself doesn't need to vexpand
+    #     self.preview_scrolled_window.set_child(label)
     #     self.current_preview_widget = label
+    #     self.preview_scrolled_window.set_vexpand(False) # Collapse
+    #     self.preview_scrolled_window.set_visible(False) # Hide
+    #     if self.close_preview_button:
+    #         self.close_preview_button.set_visible(False) # Hide close button
+    #     if self.info_box.get_parent() == self.main_content: # If info_box is currently shown
+    #         self.main_content.remove(self.info_box) # Remove it
+    
+    ##########################################################################
+    # SEARCH ENTRY
+    ##########################################################################
+            # Scale to fit preview area (e.g., max width 200px, adjust as needed)
+            # This is a simple scaling, more sophisticated logic might be needed
+            preview_width = self.preview_scrolled_window.get_allocated_width() - 20 # Account for padding
+            if preview_width <= 0: preview_width = 300 # Fallback
 
+            scale = preview_width / width if width > 0 else 1.0
+            surf_width = int(width * scale)
+            surf_height = int(height * scale)
+            surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, surf_width, surf_height)
+            cr = cairo.Context(surface)
+            cr.save() # Save context
+            cr.set_source_rgb(1, 1, 1)  # White background
+            cr.paint()
+            cr.restore() # Restore context
+            cr.scale(scale, scale)
+            page.render(cr)
+            surface.flush()
+            pixbuf = Gdk.pixbuf_get_from_surface(surface, 0, 0, surf_width, surf_height)
+            image = Gtk.Image.new_from_pixbuf(pixbuf)
+            image.set_vexpand(False) # Don't let image itself expand beyond its size
+            image.set_hexpand(False)
+            self.preview_scrolled_window.set_child(image)
+            self.current_preview_widget = image
+            return True # Indicate success
+        except Exception as e:
+            print(f"Failed to load PDF preview for {filepath}: {e}")
+            self.show_no_preview(f"Error loading PDF: {e}")
+            return False # Indicate failure
+
+    def show_text_preview(self, filepath):
+        try:
+            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                text = f.read(8192) # Read up to 8KB for preview
+            textview = Gtk.TextView()
+            textview.set_editable(False)
+            textview.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+            textview.get_buffer().set_text(text)
+            textview.set_vexpand(True) # TextView should expand
+            textview.set_hexpand(True)
+            self.preview_scrolled_window.set_child(textview)
+            self.current_preview_widget = textview
+            return True # Indicate success
+        except Exception as e:
+            print(f"Failed to load text preview for {filepath}: {e}")
+            self.show_no_preview(f"Error loading text: {e}")
+            return False # Indicate failure
+
+    def show_image_preview(self, filepath):
+        try:
+            picture = Gtk.Picture.new_for_filename(filepath)
+            picture.set_content_fit(Gtk.ContentFit.CONTAIN) # Scale down to fit, preserve aspect ratio
+            picture.set_vexpand(True) # Picture should expand within scrolled window
+            picture.set_hexpand(True)
+            self.preview_scrolled_window.set_child(picture)
+            self.current_preview_widget = picture
+            return True # Indicate success
+        except Exception as e:
+            print(f"Failed to load image preview for {filepath}: {e}")
+            self.show_no_preview(f"Error loading image: {e}")
+            return False # Indicate failure
+
+    def show_no_preview(self, message="No preview available."):
+        self.clear_preview()
+        label = Gtk.Label(label=message)
+        label.set_wrap(True)
+        label.set_xalign(0.5)
+        label.set_valign(Gtk.Align.CENTER)
+        # label.set_vexpand(True) # The label itself doesn't need to vexpand
+        self.preview_scrolled_window.set_child(label)
+        self.current_preview_widget = label
+        self.preview_scrolled_window.set_vexpand(False) # Collapse
+        self.preview_scrolled_window.set_visible(False) # Hide
+        if self.close_preview_button:
+            self.close_preview_button.set_visible(False) # Hide close button
+        if self.info_box.get_parent() == self.main_content: # If info_box is currently shown
+            self.main_content.remove(self.info_box) # Remove it
     
     ##########################################################################
     # SEARCH ENTRY
@@ -805,20 +1208,21 @@ class BackupWindow(Adw.ApplicationWindow):
     def scan_files_folder(self):
         """Scan files and return a list of file dictionaries."""
         if not os.path.exists(self.documents_path):
+            # print(f"Documents path for scanning does not exist: {self.documents_path}")
             return []
 
         file_list = []
         for root, dirs, files in os.walk(self.documents_path):
+            # Optionally, add logic here to exclude hidden directories or specific directories
+            # dirs[:] = [d for d in dirs if not d.startswith('.')] # Example: exclude hidden dirs
             for file_name in files:
+                # Optionally, add logic here to exclude hidden files
+                # if file_name.startswith('.'): continue # Example: exclude hidden files
                 file_path = os.path.join(root, file_name)
                 file_date = os.path.getmtime(file_path)
-                file_list.append({
-                    "name": file_name,
-                    "path": file_path,
-                    "date": file_date
-                })
+                file_list.append({"name": file_name, "path": file_path, "date": file_date})
         return file_list
-	
+
     def on_search_changed(self, entry):
         if self.search_timer:
             self.search_timer.cancel()
@@ -827,31 +1231,24 @@ class BackupWindow(Adw.ApplicationWindow):
         self.last_query = query  # Store the last query
 
         if not self.files_loaded:
-            # Only show loading label if user is searching for something
-            if hasattr(self, "loading_label"):
-                self.loading_label.set_visible(bool(query))
             self.pending_search_query = query
             # print("Files not loaded yet, queuing search for:", query)
             return
 
         if query:
-            if hasattr(self, "loading_label"):
-                self.loading_label.set_visible(True)
             self.search_timer = Timer(0.5, 
                 lambda: threading.Thread(target=self.perform_search, args=(query,), 
                                         daemon=True).start())
             self.search_timer.start()
         else:
-            if hasattr(self, "loading_label"):
-                self.loading_label.set_visible(False)
             # Show latest backup files from latest backup date
             self.populate_latest_backups()
-            
+
     def perform_search(self, query):
         """Perform the search and update the results."""
         try:
             results = self.search_backup_sources(query)
-            #print(f"Search results for '{query}': {len(results)} files found.")
+            self.top_center_label.set_text("Backups")
         except Exception as e:
             print(f"Error during search: {e}")
             results = []
@@ -883,10 +1280,62 @@ class BackupWindow(Adw.ApplicationWindow):
         #matches.sort(key=lambda x: x["date"], reverse=True)
         return matches[:self.page_size]
     
+    def _generate_thumbnail_pixbuf(self, file_path, size_px=32):
+        """
+        Generates a GdkPixbuf.Pixbuf thumbnail for a given file.
+        NOTE: This is a SYNCHRONOUS example. For production, make it asynchronous.
+        """
+        if not os.path.exists(file_path):
+            return None
+
+        if file_path in self.thumbnail_cache:
+            return self.thumbnail_cache[file_path]
+
+        pixbuf = None
+        ext = os.path.splitext(file_path)[1].lower()
+        mime, _ = mimetypes.guess_type(file_path)
+        if mime is None: mime = ""
+
+        try:
+            if ext in server.IMAGE_EXTENSIONS or mime.startswith("image"):
+                # Preserve aspect ratio, fit within size_px * size_px
+                temp_pixbuf = GdkPixbuf.Pixbuf.new_from_file(file_path)
+                img_width = temp_pixbuf.get_width()
+                img_height = temp_pixbuf.get_height()
+                scale_w = size_px / img_width if img_width > 0 else 1
+                scale_h = size_px / img_height if img_height > 0 else 1
+                scale = min(scale_w, scale_h)
+                pixbuf = temp_pixbuf.scale_simple(int(img_width * scale), int(img_height * scale), GdkPixbuf.InterpType.BILINEAR)
+
+            elif (ext == ".pdf" or mime == "application/pdf") and POPPLER_AVAILABLE:
+                doc = Poppler.Document.new_from_file(f"file://{file_path}", None)
+                page = doc.get_page(0)
+                p_width, p_height = page.get_size()
+
+                scale_w = size_px / p_width if p_width > 0 else 1
+                scale_h = size_px / p_height if p_height > 0 else 1
+                scale = min(scale_w, scale_h)
+                
+                thumb_width = int(p_width * scale)
+                thumb_height = int(p_height * scale)
+
+                surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, thumb_width, thumb_height)
+                cr = cairo.Context(surface)
+                cr.scale(scale, scale)
+                page.render(cr)
+                pixbuf = Gdk.pixbuf_get_from_surface(surface, 0, 0, thumb_width, thumb_height)
+        except Exception as e:
+            print(f"Error generating thumbnail for {file_path}: {e}")
+            pixbuf = None # Ensure pixbuf is None on error
+
+        if pixbuf:
+            self.thumbnail_cache[file_path] = pixbuf
+        return pixbuf
+
     def populate_results(self, results):
         """Populate the results listbox with up to 'self.page_size' search results, aligned in columns."""
         if hasattr(self, "loading_label"):
-            self.loading_label.set_visible(False)
+            pass
             
         # Clear existing results from the listbox
         while True:
@@ -899,82 +1348,206 @@ class BackupWindow(Adw.ApplicationWindow):
 
         for file_info in limited_results:
             grid = Gtk.Grid()
-            grid.set_column_spacing(24)
+            grid.set_column_spacing(12) # Reduced spacing
             grid.set_row_spacing(0)
             grid.set_hexpand(True)
             grid.set_vexpand(False)
 
-            # Icon
-            ext = os.path.splitext(file_info["name"])[1].lower()
-            if ext == ".pdf":
-                icon_name = "application-pdf-symbolic"
-            elif ext == ".txt":
-                icon_name = "text-x-generic-symbolic"
-            elif ext in [".jpg", ".jpeg", ".png"]:
-                icon_name = "image-x-generic-symbolic"
+            # Thumbnail or Icon
+            thumbnail_pixbuf = self._generate_thumbnail_pixbuf(file_info["path"], 32) # 32px thumbnail
+            if thumbnail_pixbuf:
+                texture = Gdk.Texture.new_for_pixbuf(thumbnail_pixbuf)
+                thumbnail_widget = Gtk.Image.new_from_paintable(texture)
             else:
-                icon_name = "text-x-generic-symbolic"
-            icon = Gtk.Image.new_from_icon_name(icon_name)
-            grid.attach(icon, 0, 0, 1, 1)
+                # Fallback icon
+                ext = os.path.splitext(file_info["name"])[1].lower()
+                if ext == ".pdf":
+                    icon_name = "application-pdf"
+                elif ext in server.TEXT_EXTENSIONS: # Use your server.TEXT_EXTENSIONS
+                    icon_name = "text-x-generic"
+                elif ext in server.IMAGE_EXTENSIONS: # Use your server.IMAGE_EXTENSIONS
+                    icon_name = "image-x-generic"
+                else:
+                    icon_name = "text-x-generic" # Default
+                thumbnail_widget = Gtk.Image.new_from_icon_name(icon_name)
+            thumbnail_widget.set_pixel_size(32) # Ensure consistent size for icons too
+            grid.attach(thumbnail_widget, 0, 0, 1, 1)
 
-            # Name
+            # Name and Size Box (Vertical)
+            name_and_size_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+            name_and_size_box.set_hexpand(True) # This box should expand
+
+            # Name Label
             shorted_file_path = file_info["path"].replace(server.backup_folder_name(), "").lstrip(os.sep)
             name_label = Gtk.Label(label=shorted_file_path, xalign=0)
-            name_label.set_hexpand(True)
+            name_label.set_hexpand(True) # Name label expands within its parent (name_and_size_box)
             name_label.set_halign(Gtk.Align.START)
-            name_label.set_max_width_chars(40)  # Limit to 40 chars (adjust as needed)
-            #name_label.set_ellipsize(Pango.EllipsizeMode.END)  # Add this line
-            grid.attach(name_label, 1, 0, 1, 1)
+            name_label.set_ellipsize(Pango.EllipsizeMode.END)  # Enable ellipsizing
+            name_and_size_box.append(name_label)
 
-            # Size
-            if os.path.exists(file_info["path"]):
-                size_label_text = server.get_item_size(file_info["path"], True)
-            else:
-                size_label_text = ""
+            # Size Label
+            size_label_text = server.get_item_size(file_info["path"], True)
+            if size_label_text == "None": # server.get_item_size returns string "None"
+                size_label_text = "N/A"
             size_label = Gtk.Label(label=size_label_text, xalign=0)
-            size_label.set_hexpand(False)
-            size_label.set_halign(Gtk.Align.START)
-            grid.attach(size_label, 2, 0, 1, 1)
+            size_label.add_css_class("caption") # Style as caption
+            name_and_size_box.append(size_label)
+            
+            grid.attach(name_and_size_box, 1, 0, 1, 1) # Col 1: Name/Size Box
+            
+            # Date Label
+            # Determine backup_date string based on path structure or mtime
+            backup_date_str = ""
+            path_for_date_extraction = file_info["path"].replace(server.backup_folder_name(), "").lstrip(os.sep)
+            path_parts = path_for_date_extraction.split(os.sep)
 
-            # Date
-            backup_date = datetime.fromtimestamp(file_info["date"]).strftime("%b %d %H:%M")
-            date_label = Gtk.Label(label=backup_date, xalign=0)
+            if len(path_parts) > 1 and path_parts[0] != server.MAIN_BACKUP_LOCATION: # Check if it's not main backup and has at least date/time parts
+                try:
+                    date_str_from_path = path_parts[0] # e.g., "06-06-2025"
+                    time_str_from_path = path_parts[1] # e.g., "16-41"
+                    
+                    parsed_date_obj = datetime.strptime(date_str_from_path, "%d-%m-%Y")
+                    formatted_time_str = time_str_from_path.replace('-', ':') # "16-41" -> "16:41"
+                    backup_date_str = f"{parsed_date_obj.strftime('%b %d')} {formatted_time_str}"
+                except (ValueError, IndexError) as e:
+                    # Fallback if path parts are not as expected
+                    backup_date_str = datetime.fromtimestamp(file_info["date"]).strftime("%b %d %H:%M")
+            else: # Main backup or unexpected structure, use mtime
+                backup_date_str = datetime.fromtimestamp(file_info["date"]).strftime("%b %d %H:%M")
+            date_label = Gtk.Label(label=backup_date_str, xalign=0)
             date_label.set_hexpand(False)
             date_label.set_halign(Gtk.Align.START)
-            #grid.attach(date_label, 3, 0, 1, 1)
+            date_label.add_css_class("caption") # Style date as caption
+            grid.attach(date_label, 2, 0, 1, 1) # Col 2: Date
 
-            # Placeholder for last backup (optional)
-            # last_backup_label = Gtk.Label(label="", xalign=0)
-            # last_backup_label.set_hexpand(False)
-            # last_backup_label.set_halign(Gtk.Align.START)
-            # grid.attach(last_backup_label, 4, 0, 1, 1)
+            # Preview button for each row (conditionally visible)
+            preview_button_row = Gtk.Button(label="Preview")
+            preview_button_row.set_tooltip_text("Show a preview of the selected file.")
+            # preview_button_row.add_css_class("flat") # Use flat style for less emphasis than restore
+            setattr(preview_button_row, "file_path", file_info["path"])
+            preview_button_row.connect("clicked", lambda btn: self.open_modal_preview_window(getattr(btn, "file_path")))
+            preview_button_row.set_hexpand(False)
+
+            # on_open_location_clicked
+            open_location_button_row = Gtk.Button(label="Open Location")
+            open_location_button_row.set_tooltip_text("Open the folder containing this backup file.")
+            # open_location_button_row.add_css_class("flat") # Use flat style for less emphasis than restore
+            setattr(open_location_button_row, "file_path", file_info["path"])
+            open_location_button_row.connect("clicked", lambda btn: self.on_open_location_clicked(getattr(btn, "file_path")))
+            open_location_button_row.set_hexpand(False)
+            grid.attach(open_location_button_row, 3, 0, 1, 1) # Col 3: Preview Button
+
+            # Find file versions
+            find_versions_button_row = Gtk.Button(label="Versions")
+            find_versions_button_row.set_tooltip_text(
+                "Search for all available versions of the selected file, including the current and previous backups. "
+                "Use this to restore or review earlier versions of your file.")
+            # find_versions_button_row.add_css_class("flat") # Use flat style for less emphasis than restore
+            setattr(find_versions_button_row, "file_path", file_info["path"])
+            # find_versions_button_row.connect("clicked", lambda btn: self.open_preview_window(getattr(btn, "file_path")))
+            find_versions_button_row.connect("clicked", lambda btn: self.find_update(getattr(btn, "file_path")))
+            find_versions_button_row.set_hexpand(False)
+            grid.attach(find_versions_button_row, 4, 0, 1, 1) # Col 4: Preview Button
+
+            # Determine if preview is available for this file type
+            filepath_for_preview = file_info["path"]
+            ext_preview = os.path.splitext(filepath_for_preview)[1].lower()
+            mime_preview, _ = mimetypes.guess_type(filepath_for_preview)
+            if mime_preview is None: mime_preview = ""
+
+            is_previewable = False
+            if (ext_preview == ".pdf" or mime_preview == "application/pdf") and POPPLER_AVAILABLE and os.path.exists(filepath_for_preview):
+                is_previewable = True
+            elif (ext_preview in server.TEXT_EXTENSIONS or mime_preview.startswith("text")) and os.path.exists(filepath_for_preview):
+                is_previewable = True
+            elif (ext_preview in server.IMAGE_EXTENSIONS or mime_preview.startswith("image")) and os.path.exists(filepath_for_preview):
+                is_previewable = True
+            
+            preview_button_row.set_sensitive(is_previewable)
+            grid.attach(preview_button_row, 5, 0, 1, 1) # Col 5: Preview Button
+
+            # Restore button for each row
+            restore_button_row = Gtk.Button(label="Restore")
+            restore_button_row.set_tooltip_text("Restore this version of the file to its original location.")
+            restore_button_row.add_css_class("suggested-action")
+            setattr(restore_button_row, "file_path", file_info["path"])
+            restore_button_row.connect("clicked", self.on_restore_button_clicked_from_row) # Assuming this method exists
+            restore_button_row.set_hexpand(False) # Ensure it doesn't expand
+            grid.attach(restore_button_row, 6, 0, 1, 1) # Col 6: Restore Button
 
             listbox_row = Gtk.ListBoxRow()
+            listbox_row.set_margin_top(6) # No top margin, space will be from the header
+            listbox_row.set_margin_bottom(3)
+            listbox_row.set_margin_start(12)
+            listbox_row.set_margin_end(12)
             listbox_row.set_child(grid)
+            listbox_row.add_css_class("file-list-row-card") # Apply card-like styling
             listbox_row.device_path = file_info["path"]
             self.listbox.append(listbox_row)
     
     # Open location button
-    def on_open_location_clicked(self, button):
-        if self.selected_file_path:
-            folder = os.path.dirname(self.selected_file_path)
+    # def on_open_location_clicked(self, button):
+    #     if self.selected_file_path:
+    #         folder = os.path.dirname(self.selected_file_path)
             
-            try:
-                sub.Popen(["xdg-open", folder])
-            except Exception as e:
-                print("Failed to open folder:", e)
+    #         try:
+    #             sub.Popen(["xdg-open", folder])
+    #         except Exception as e:
+    #             print("Failed to open folder:", e)
 
-    def on_listbox_key_press(self, controller, keyval, keycode, state):
-        if keyval == Gdk.KEY_space:
-            row = self.listbox.get_selected_row()
-            if row:
-                path = getattr(row, "device_path", None)
-                if path:
-                    self.open_preview_window(path)
-            return True
-        return False
+    def on_open_location_clicked(self, file_path_from_button):
+        if file_path_from_button:
+            folder_path = os.path.dirname(file_path_from_button)
+            
+            if not os.path.isdir(folder_path):
+                print(f"Error: The parent directory does not exist or is not accessible: {folder_path}")
+                dialog = Adw.MessageDialog(transient_for=self, modal=True,
+                                           title="Cannot Open Location",
+                                           body=f"The folder '{folder_path}' could not be found or accessed.")
+                dialog.add_response("ok", "OK")
+                dialog.connect("response", lambda d, r: d.close())
+                dialog.present()
+                return
+
+            try:
+                folder_uri = GLib.filename_to_uri(folder_path, None)
+                # Asynchronously launch the default application for the folder URI
+                Gio.AppInfo.launch_default_for_uri_async(folder_uri, None, None, 
+                                                         self._on_open_location_callback, folder_path)
+                print(f"Attempting to open folder: {folder_path}")
+            except GLib.Error as e:
+                print(f"GLib error preparing to open folder {folder_path}: {e}. Falling back to xdg-open.")
+                self._fallback_open_location(folder_path)
+            except Exception as e: # Catch any other unexpected errors
+                print(f"Unexpected error opening folder {folder_path}: {e}. Falling back to xdg-open.")
+                self._fallback_open_location(folder_path)
+        else:
+            print("No file path provided to open location.")
+            
+    def _fallback_open_location(self, folder_path):
+        """Fallback to xdg-open if Gio methods fail."""
+        try:
+            sub.Popen(["xdg-open", folder_path])
+            print(f"Opened folder: {folder_path} using xdg-open as fallback.")
+        except Exception as e_xdg:
+            print(f"Failed to open folder {folder_path} with xdg-open: {e_xdg}")
+            dialog = Adw.MessageDialog(transient_for=self, modal=True,
+                                       title="Error Opening Location",
+                                       body=f"Could not open folder: {folder_path}\nDetails: {e_xdg}")
+            dialog.add_response("ok", "OK")
+            dialog.connect("response", lambda d, r: d.close())
+            dialog.present()
+    # def on_listbox_key_press(self, controller, keyval, keycode, state):
+    #     if keyval == Gdk.KEY_space:
+    #         row = self.listbox.get_selected_row()
+    #         if row:
+    #             path = getattr(row, "device_path", None)
+    #             if path:
+    #                 self.open_preview_window(path)
+    #         return True
+    #     return False
     
-    def open_preview_window(self, filepath):
+    def open_preview_window_popup(self, filepath): # Renamed to avoid conflict with inline show_preview
         # If a preview window is already open, close it and return (toggle behavior)
         if getattr(self, "preview_window", None) is not None:
             self.preview_window.close()
@@ -1064,15 +1637,15 @@ class BackupWindow(Adw.ApplicationWindow):
             picture.set_hexpand(True)
             box.append(picture)
 
-        # Add key controller to the preview window for Spacebar close
-        key_controller = Gtk.EventControllerKey()
-        def preview_key_press(controller, keyval, keycode, state):
-            if keyval == Gdk.KEY_space:
-                preview_win.close()
-                return True
-            return False
-        key_controller.connect("key-pressed", preview_key_press)
-        preview_win.add_controller(key_controller)
+        # # Add key controller to the preview window for Spacebar close
+        # key_controller = Gtk.EventControllerKey()
+        # def preview_key_press(controller, keyval, keycode, state):
+        #     if keyval == Gdk.KEY_space:
+        #         preview_win.close()
+        #         return True
+        #     return False
+        # key_controller.connect("key-pressed", preview_key_press)
+        # preview_win.add_controller(key_controller)
 
         # When the preview window is closed, clear the reference
         def on_close(win, *args):
@@ -1080,7 +1653,8 @@ class BackupWindow(Adw.ApplicationWindow):
 
         preview_win.connect("close-request", on_close)
         preview_win.present()
-    def on_settings_clicked(self, button):
+
+    def on_settings_clicked(self, action, parameter=None):
         # Only create one settings window at a time
         if getattr(self, "settings_window", None) is not None:
             self.settings_window.present()
@@ -1097,8 +1671,6 @@ class BackupWindow(Adw.ApplicationWindow):
     # Find updates for a file
     ########################################################################################
     def find_update(self, file_path):
-        self.find_updates.set_sensitive(False)  # Disable button while searching
-
         # Extract the file name to search for all its backup versions
         def do_search():
             file_name = os.path.basename(file_path)
@@ -1138,7 +1710,6 @@ class BackupWindow(Adw.ApplicationWindow):
 
         def on_close(win, *args):
             self.update_window = None
-            self.find_updates.set_sensitive(True)  # Re-enable button
 
         win.connect("close-request", on_close)
 
@@ -1156,12 +1727,6 @@ class BackupWindow(Adw.ApplicationWindow):
         restore_button.set_css_classes(["suggested-action"])
         restore_button.set_sensitive(False)
         header.pack_end(restore_button)
-
-        open_file_location = Gtk.Button(label="Open File Location")
-        # open_file_location.set_css_classes(["suggested-action"])
-        open_file_location.set_sensitive(False)
-        open_file_location.connect("clicked", self.on_open_location_clicked)
-        header.pack_start(open_file_location)
 
         # Main content: List of updates
         vbox = Gtk.Box(
@@ -1237,91 +1802,144 @@ class BackupWindow(Adw.ApplicationWindow):
         # Enable restore button only when a row is selected
         def on_row_selected(lb, row):
             restore_button.set_sensitive(row is not None)
-            open_file_location.set_sensitive(row is not None)
-
             if row:
                 # Use the correct file path for the selected version
                 path: str = getattr(row, "file_path", None)
                 self.selected_file_path = path  # Store the full path for restore
-                open_file_location.selected_path = path  # Attach to the button for location opening
                 print("Selected item path:", path)
             else:
-                self.device_name_label.set_text("")
                 self.selected_file_path = None
-                open_file_location.selected_path = None
 
         listbox.connect("row-selected", on_row_selected)
 
         # Restore logic
         def on_restore_clicked(btn):
-            restore_button.set_sensitive(False)
+            # btn.set_sensitive(False) # Sensitivity handled by perform_restore_action
             row = listbox.get_selected_row()
-            if not row:
+            if not row or not hasattr(row, "file_path"):
                 return
-            self.restore_button.connect("clicked", self.on_restore_button_clicked)
+            file_to_restore = getattr(row, "file_path")
+            self.perform_restore_action(file_to_restore, btn) # Pass the button itself
         restore_button.connect("clicked", on_restore_clicked)
-        
-        # Add key controller for Spacebar preview
-        key_controller = Gtk.EventControllerKey()
-        def on_key_press(controller, keyval, keycode, state):
-            if keyval == Gdk.KEY_space:
-                row = listbox.get_selected_row()
-                if row and hasattr(row, "file_path"):
-                    self.open_preview_window(row.file_path)
-                return True
-            return False
-        key_controller.connect("key-pressed", on_key_press)
-        listbox.add_controller(key_controller)
+        # # Add key controller for Spacebar preview
+        # key_controller = Gtk.EventControllerKey()
+        # def on_key_press(controller, keyval, keycode, state):
+        #     if keyval == Gdk.KEY_space:
+        #         row = listbox.get_selected_row()
+        #         if row and hasattr(row, "file_path"):
+        #             self.open_preview_window(row.file_path)
+        #         return True
+        #     return False
+        # key_controller.connect("key-pressed", on_key_press)
+        # listbox.add_controller(key_controller)
 
         win.connect("close-request", on_close)
         win.present()
     
-    def on_restore_button_clicked(self, button):
-        self.restore_button.set_sensitive(False)
+    # def update_overview_cards_from_summary(self):
+    #     summary_file_path = server.get_summary_filename()
+    #     if not os.path.exists(summary_file_path):
+    #         print(f"Summary file not found: {summary_file_path}")
+    #         # Optionally, clear or show default/empty state for cards
+    #         return
 
-        if self.selected_file_path:
-            backup_root = os.path.abspath(server.main_backup_folder())
-            abs_selected = os.path.abspath(self.selected_file_path)
-            rel_path = os.path.relpath(abs_selected, backup_root)
-            destination_path = os.path.join(server.USER_HOME, rel_path)
+    #     try:
+    #         with open(summary_file_path, 'r') as f:
+    #             summary_data = json.load(f)
+    #     except Exception as e:
+    #         print(f"Error loading or parsing summary file {summary_file_path}: {e}")
+    #         return
 
-            def do_restore():
-                try:
-                    GLib.idle_add(self.restore_progressbar.set_visible, True)
-                    os.makedirs(os.path.dirname(destination_path), exist_ok=True)
-                    src = self.selected_file_path
-                    dst = destination_path
-                    total_size = os.path.getsize(src)
-                    copied = 0
-                    chunk_size = 1024 * 1024  # 1MB
+    #     if "categories" not in summary_data:
+    #         print("Summary file does not contain 'categories' key.")
+    #         return
 
-                    with open(src, "rb") as fsrc, open(dst, "wb") as fdst:
-                        while True:
-                            chunk = fsrc.read(chunk_size)
-                            if not chunk:
-                                break
-                            fdst.write(chunk)
-                            copied += len(chunk)
-                            progress = copied / total_size if total_size else 1.0
-                            GLib.idle_add(self.restore_progressbar.set_fraction, progress)
-                    print(f"Restored {src} to {dst}")
-                    shutil.copystat(src, dst)
-                    self.restore_button.set_sensitive(True)
+    #     # Assuming overview_cards_grid is accessible and its children are the cards in order
+    #     # This part needs to be robust. It's better to store references to the cards or their labels.
+    #     # For now, let's assume a direct mapping based on the order in overview_data in __init__
+    #     # This is a simplified example; a more robust solution would involve updating specific cards by ID or title.
+    #     # For this example, we'll just print, as direct update is complex without card references.
+    #     print("Summary data found!")
+    #     # TODO: Implement logic to find and update each card in self.overview_cards_grid
 
-                    # Open the folder containing the restored file
-                    #sub.Popen(["xdg-open", os.path.dirname(dst)])
-
-                    # Close the update window after restore
-                    if getattr(self, "update_window", None) is not None:
-                        GLib.idle_add(self.update_window.close)
-                except Exception as e:
-                    print(f"Error restoring file: {e}")
-                finally:
-                    GLib.idle_add(self.restore_progressbar.set_visible, False)
-
-            threading.Thread(target=do_restore, daemon=True).start()
+    def on_restore_button_clicked_from_row(self, button):
+        file_to_restore = getattr(button, "file_path", None)
+        if file_to_restore:
+            self.perform_restore_action(file_to_restore, button)
         else:
-            print("No file selected to restore.")
+            print("No file_path associated with this restore button.")
+
+    # Centralized restore logic
+    def perform_restore_action(self, file_to_restore_path, clicked_button_widget=None):
+        if clicked_button_widget:
+            clicked_button_widget.set_sensitive(False)
+
+        if not file_to_restore_path:
+            print("No file path provided for restore.")
+            if clicked_button_widget: GLib.idle_add(clicked_button_widget.set_sensitive, True)
+            return
+
+        abs_file_to_restore_path = os.path.abspath(file_to_restore_path)
+        main_backup_abs_path = os.path.abspath(server.main_backup_folder())
+        incremental_backups_abs_path = os.path.abspath(server.backup_folder_name())
+
+        rel_path = None
+        if abs_file_to_restore_path.startswith(main_backup_abs_path):
+            rel_path = os.path.relpath(abs_file_to_restore_path, main_backup_abs_path)
+        elif abs_file_to_restore_path.startswith(incremental_backups_abs_path):
+            temp_rel_path = os.path.relpath(abs_file_to_restore_path, incremental_backups_abs_path)
+            # Expected structure: DATE/TIME/actual/path/to/file
+            parts = temp_rel_path.split(os.sep)
+            if len(parts) > 2: # Ensure there's at least DATE/TIME and then the actual relative path
+                rel_path = os.path.join(*parts[2:])
+            else:
+                print(f"Error: Could not determine relative path for incremental backup: {file_to_restore_path}")
+                if clicked_button_widget: GLib.idle_add(clicked_button_widget.set_sensitive, True)
+                return
+        else:
+            print(f"Error: File path '{file_to_restore_path}' is not within known backup locations: '{main_backup_abs_path}' or '{incremental_backups_abs_path}'")
+            if clicked_button_widget: GLib.idle_add(clicked_button_widget.set_sensitive, True)
+            return
+
+        destination_path = os.path.join(server.USER_HOME, rel_path)
+
+        def do_restore():
+            try:
+                GLib.idle_add(self.restore_progressbar.set_visible, True)
+                GLib.idle_add(self.restore_progressbar.set_fraction, 0) # Reset progress
+
+                os.makedirs(os.path.dirname(destination_path), exist_ok=True)
+                src = file_to_restore_path # Use the passed file_to_restore_path
+                dst = destination_path
+                total_size = os.path.getsize(src)
+                copied = 0
+                chunk_size = 1024 * 1024  # 1MB
+
+                with open(src, "rb") as fsrc, open(dst, "wb") as fdst:
+                    while True:
+                        chunk = fsrc.read(chunk_size)
+                        if not chunk: break
+                        fdst.write(chunk)
+                        copied += len(chunk)
+                        progress = copied / total_size if total_size > 0 else 1.0
+                        GLib.idle_add(self.restore_progressbar.set_fraction, progress)
+                print(f"Restored {src} to {dst}")
+                shutil.copystat(src, dst)
+
+                if clicked_button_widget:
+                    GLib.idle_add(clicked_button_widget.set_sensitive, True)
+
+                # Close the update window if the restore was triggered from there
+                if hasattr(self, "update_window") and self.update_window is not None and self.update_window.get_visible():
+                    if clicked_button_widget and clicked_button_widget.get_ancestor(Gtk.Window) == self.update_window:
+                        GLib.idle_add(self.update_window.close)
+            except Exception as e:
+                print(f"Error restoring file: {e}")
+                if clicked_button_widget: GLib.idle_add(clicked_button_widget.set_sensitive, True)
+            finally:
+                def hide_progress(): self.restore_progressbar.set_visible(False)
+                GLib.timeout_add(1000, hide_progress) # Hide after 1 second
+        threading.Thread(target=do_restore, daemon=True).start()
 
     def on_main_window_close(self, *args):
         self.get_application().quit()
@@ -1329,12 +1947,13 @@ class BackupWindow(Adw.ApplicationWindow):
     
     def on_window_map(self, *args):
         self.search_entry.grab_focus()
+        # self.add_found_devices_to_devices_popover_box() # This is now handled by the modal
         return False
     
     #########################################################################
     # LOGS
     ##########################################################################
-    def show_backup_logs_dialog(self, button):
+    def show_backup_logs_dialog(self, action, parameter=None):
         """Display backup logs dialog."""
         logs_dialog = Adw.Window(
             transient_for=self,
@@ -1345,7 +1964,7 @@ class BackupWindow(Adw.ApplicationWindow):
         )
 
         # Read logs file from the server location
-        log_file_path = server.LOG_LOCATION  # Make sure this is the correct path to your log files
+        log_file_path = server.get_log_file_path()
         try:
             with open(log_file_path, "r") as log_file:
                 log_content = log_file.read()
@@ -1382,7 +2001,7 @@ class BackupWindow(Adw.ApplicationWindow):
         # Show the dialog
         logs_dialog.present()
 
-    def on_restore_system_button_clicked(self, button):
+    def on_restore_system_button_clicked(self, action, parameter=None):
         # Modal window
         win = Gtk.Window(
             title="System Restore",
@@ -1397,7 +2016,7 @@ class BackupWindow(Adw.ApplicationWindow):
         restore_btn = Gtk.Button(label="Restore")
         restore_btn.set_css_classes(["suggested-action"])
         restore_btn.set_halign(Gtk.Align.START)
-        header.pack_start(restore_btn)
+        header.pack_end(restore_btn)
         win.set_titlebar(header)
 
         # Stack for pages
@@ -1472,18 +2091,18 @@ class BackupWindow(Adw.ApplicationWindow):
                         item_path = os.path.join(main_folder, item)
                         hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
                         if os.path.isdir(item_path):
-                            icon = Gtk.Image.new_from_icon_name("folder-symbolic")
+                            icon = Gtk.Image.new_from_icon_name("folder")
                         else:
                             # Use a generic file icon or guess by extension
                             ext = os.path.splitext(item)[1].lower()
                             if ext in [".jpg", ".jpeg", ".png", ".gif"]:
-                                icon_name = "image-x-generic-symbolic"
+                                icon_name = "image-x-generic"
                             elif ext in [".pdf"]:
-                                icon_name = "application-pdf-symbolic"
+                                icon_name = "application-pdf"
                             elif ext in [".txt", ".md", ".log"]:
-                                icon_name = "text-x-generic-symbolic"
+                                icon_name = "text-x-generic"
                             else:
-                                icon_name = "text-x-generic-symbolic"
+                                icon_name = "text-x-generic"
                             icon = Gtk.Image.new_from_icon_name(icon_name)
                         icon.set_pixel_size(16)
                         hbox.append(icon)
@@ -1830,7 +2449,12 @@ class SettingsWindow(Adw.PreferencesWindow):
         self.ignored_folders = []
         self.programmatic_change = False  
         self.switch_cooldown_active = False  # To track the cooldown state
-
+        
+        # Get exclude hidden items setting from the server 
+        self.exclude_hidden_itens: bool = server.get_database_value(
+            section='EXCLUDE',
+            option='exclude_hidden_itens')
+        
         # --- Backups Tab ---
         backups_page = Adw.PreferencesPage(title="Backups")
         backups_page.set_icon_name("backups-app-symbolic")
@@ -1850,7 +2474,7 @@ class SettingsWindow(Adw.PreferencesWindow):
         self.add(backups_page)
 
         # --- Create a new ActionRow for "Exclude Hidden Files" ---
-        self.exclude_hidden_switch = Gtk.Switch(valign=Gtk.Align.CENTER)
+        self.exclude_hidden_switch = Gtk.Switch(valign=Gtk.Align.CENTER) # Already defined
         exclude_hidden_files_row = Adw.ActionRow(title="Ignore hidden files")
         exclude_hidden_files_row.add_suffix(self.exclude_hidden_switch)
         exclude_hidden_files_row.set_activatable_widget(self.exclude_hidden_switch)
@@ -1859,7 +2483,7 @@ class SettingsWindow(Adw.PreferencesWindow):
         
         # --- Folders to Ignore Tab ---
         folders_to_ignore_page = Adw.PreferencesPage(title="Folders")
-        folders_to_ignore_page.set_icon_name("folder-symbolic")
+        folders_to_ignore_page.set_icon_name("folder")
 
         # Bold title for the "ignore hidden files"
         self.ignore_hidden_files_group = Adw.PreferencesGroup(title="Ignore Hidden Files")
@@ -1873,7 +2497,7 @@ class SettingsWindow(Adw.PreferencesWindow):
         folders_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         folders_header.set_halign(Gtk.Align.CENTER)
 
-        add_folder_button = Gtk.Button(icon_name="list-add-symbolic", halign=Gtk.Align.CENTER)
+        add_folder_button = Gtk.Button(icon_name="list-add", halign=Gtk.Align.CENTER)
         add_folder_button.add_css_class("flat")
         add_folder_button.connect("clicked", self.on_add_folder_clicked)
         folders_header.append(add_folder_button)
@@ -2102,7 +2726,7 @@ class SettingsWindow(Adw.PreferencesWindow):
     def create_folder_row(self, folder_name):
         """Create a row for folders with a trash icon."""
         row = Adw.ActionRow(title=folder_name)
-        trash_button = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER)
+        trash_button = Gtk.Button(icon_name="user-trash", valign=Gtk.Align.CENTER)
         trash_button.add_css_class("flat")
         trash_button.connect("clicked", self.on_remove_folder_clicked, row, folder_name)
         row.add_suffix(trash_button)
@@ -2177,11 +2801,7 @@ class SettingsWindow(Adw.PreferencesWindow):
             value=true_false)
     
     def auto_select_hidden_itens(self):
-        exclude_hidden_itens: bool = server.get_database_value(
-            section='EXCLUDE',
-            option='exclude_hidden_itens')
-
-        if exclude_hidden_itens:
+        if self.exclude_hidden_itens:
             self.exclude_hidden_switch.set_active(True)
         else:
             self.exclude_hidden_switch.set_active(False)
@@ -2212,7 +2832,7 @@ class BackupProgressRow(Gtk.Box):
         self.append(top_row)
 
         # File icon
-        icon = Gtk.Image.new_from_icon_name("text-x-generic-symbolic")
+        icon = Gtk.Image.new_from_icon_name("text-x-generic") # Or a more specific icon based on file type if available
         icon.set_pixel_size(24)
         top_row.append(icon)
 
@@ -2237,10 +2857,10 @@ class BackupProgressRow(Gtk.Box):
         top_row.append(spacer)
 
         # Cancel button
-        self.cancel_button = Gtk.Button(icon_name="window-close-symbolic")
-        self.cancel_button.add_css_class("flat")
-        self.cancel_button.set_valign(Gtk.Align.CENTER)
-        top_row.append(self.cancel_button)
+        # self.cancel_button = Gtk.Button(icon_name="window-close") # Removed
+        # self.cancel_button.add_css_class("flat") # Removed
+        # self.cancel_button.set_valign(Gtk.Align.CENTER) # Removed
+        # top_row.append(self.cancel_button) # Removed
 
         # Progress bar
         self.progress = Gtk.ProgressBar()
@@ -2253,11 +2873,50 @@ class BackupProgressRow(Gtk.Box):
         self.progress.set_fraction(progress)
         if progress >= 1.0:
             self.size_eta_label.set_text(f"{size} • completed")
-            self.cancel_button.set_visible(False)
+            # self.cancel_button.set_visible(False) # Removed
         else:
             self.size_eta_label.set_text(f"{size} • {eta}")
-            self.cancel_button.set_visible(True)
+            # self.cancel_button.set_visible(True) # Removed
 
+class ScanningStatusRow(Gtk.Box):
+    def __init__(self, filename):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.set_margin_top(6)
+        self.set_margin_bottom(6)
+        self.set_margin_start(8)
+        self.set_margin_end(8)
+        self.set_hexpand(True)
+        # self.add_css_class("backup-progress-row")
+
+        # Top row: icon + scanning label
+        top_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        top_row.set_hexpand(True)
+        top_row.set_vexpand(True)
+        self.append(top_row)
+
+        # File icon
+        icon = Gtk.Image.new_from_icon_name("system-search") # Icon for scanning
+        icon.set_pixel_size(24)
+        top_row.append(icon)
+
+        # Info column for the status label
+        info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0) # spacing=0 or 2
+        info_box.set_hexpand(True)
+        self.status_label = Gtk.Label(label="Scanning...")
+        self.status_label.set_xalign(0)
+        self.status_label.set_max_width_chars(40) # Adjust as needed, similar to filename
+        info_box.append(self.status_label)
+        top_row.append(info_box)
+
+        info_box.append(self.status_label)
+        top_row.append(info_box)
+
+    def update(self, text):
+        if text:
+            self.status_label.set_text(text)
+            self.set_visible(True)
+        else:
+            self.set_visible(False)
 
 def main():
     # server.setup_logging()
@@ -2266,18 +2925,15 @@ def main():
 
 
 if __name__ == "__main__":
-    os.makedirs(os.path.dirname(server.LOG_FILE_PATH), exist_ok=True)
+    log_file_path = server.get_log_file_path()
+    os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
     
     formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     
-    file_handler = logging.FileHandler(server.LOG_FILE_PATH)
+    file_handler = logging.FileHandler(log_file_path)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
     
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
-
     main()
