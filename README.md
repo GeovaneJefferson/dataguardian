@@ -6,6 +6,10 @@ Data Guardian is a powerful Python-based backup solution designed to keep your i
 
 ---
 
+⚠️ **Under Development:** Please note that Data Guardian is currently under active development. While it offers many features, it may still contain bugs or undergo significant changes. Use with caution, especially for critical data, and consider contributing to its development!
+
+---
+
 ## ✨ Key Features
 
 - **Automatic & Incremental Backups**
@@ -89,11 +93,41 @@ Data Guardian is a powerful Python-based backup solution designed to keep your i
 
 ### Installation
 
-Clone or download the repository, then install dependencies as needed.
+Data Guardian is intended to be installed as a Flatpak for the best user experience.
+
+**1. Via Flatpak (Recommended)**
+
+   *(Note: Flatpak manifest and build instructions are under development. Once available, you will typically build and install it locally as follows. For official releases, it might be available on Flathub or another repository.)*
+
+   First, ensure you have `flatpak` and `flatpak-builder` installed on your system.
+
+   Clone the repository (if you haven't already):
+   ```bash
+   git clone https://github.com/yourusername/dataguardian.git
+   cd dataguardian
+   ```
+
+   Then, navigate to the directory containing the Flatpak manifest (e.g., `build-aux/` or the project root if the manifest is there) and run:
+   ```bash
+   flatpak-builder --force-clean --user --install builddir <your-app-id>.yaml
+   # Replace <your-app-id>.yaml with the actual manifest file name, e.g., com.github.yourusername.dataguardian.yaml
+   ```
+
+**2. Manual Installation (for development or testing)**
+
+   Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/dataguardian.git
+   cd dataguardian
+   ```
+   Install Python dependencies (preferably in a virtual environment):
+   ```bash
+   # python3 -m venv .venv && source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
+   Ensure system dependencies listed in "Prerequisites" are met.
 
 ### Running the GUI
 
-```bash
-cd /path/to/dataguardian/src
-python3 main.py
+After manual installation (if it includes desktop integration steps), the app may appear in your system's main application menu.
 
