@@ -6,68 +6,64 @@ Data Guardian is a powerful Python-based backup solution designed to keep your i
 
 ---
 
-⚠️ **Under Development:** Please note that Data Guardian is currently under active development. While it offers many features, it may still contain bugs or undergo significant changes. Use with caution, especially for critical data, and consider contributing to its development!
+⚠️ **Under Development:** Please note that Data Guardian is currently under active development. While it offers many features, it may still contain bugs or undergo significant changes. Use with caution, especially for critical data!
 
 ---
 
 ## ✨ Key Features
+- **Automatic & Incremental Backups: Effortless, Continuous Protection**
+  - **Set-and-Forget Automation:** A vigilant daemon continuously monitors your home directory and connected external drives, automatically backing up your precious data according to your schedule. No manual intervention required!
+  - **Efficient Versioning & Storage:** After an initial comprehensive backup (to `.main_backup`), Data Guardian intelligently saves only the changes as incremental backups in clearly organized, date- and time-stamped folders. This optimizes storage space and makes restoring specific versions a breeze.
 
-- **Automatic & Incremental Backups**
-  - Persistent daemon monitors your home directory and external drives, backing up data automatically on your schedule.
-  - Initial full backup stored in `.main_backup`.
-  - Subsequent changes saved as incremental backups in date- and time-stamped folders, optimizing storage and recovery.
-
-- **Smart & Selective Backup**
-  - Configurable exclusions for directories, file types, and hidden files.
-  - Uses metadata caching per folder (`.backup_meta.json`) to detect changes efficiently and minimize scanning overhead.
-  - Skips unchanged folders automatically to speed up backups.
+- **Smart & Selective Backup: You're in Control**
+  - **Tailored to Your Needs:** Easily configure exclusions for specific directories, file types, or even hidden files, ensuring Data Guardian protects exactly what matters most to you.
+  - **Lightning-Fast Change Detection:** Say goodbye to lengthy scans! Data Guardian uses smart metadata caching (`.backup_meta.json` per folder) to instantly identify changes, drastically reducing scanning overhead.
+  - **Optimized Performance:** Unchanged folders are intelligently skipped, making your backup process faster and more efficient.
 
 - **External Drive Integration**
   - Detects and backs up to your selected external storage device.
   - Checks for sufficient disk space before every copy operation.
 
-- **Robust Backup Integrity**
-  - Uses SHA-256 file hashing and file size/modification time checks to accurately identify updated files.
-  - Handles backup interruptions gracefully and resumes without data loss.
-  - Concurrent file copying with `ProcessPoolExecutor` for high throughput.
-  - Non-blocking async design ensures smooth system performance.
+- **Robust Backup Integrity: Data You Can Trust**
+  - **Unyielding Data Accuracy:** Your data's integrity is paramount. Data Guardian employs SHA-256 file hashing along with file size and modification time checks to precisely identify every new or modified file, ensuring your backups are always accurate.
+  - **Resilient to Interruptions:** Life happens. Data Guardian is designed to handle backup interruptions gracefully, capable of resuming without any data loss, ensuring your backup process is robust and reliable.
+  - **High-Speed Transfers & Seamless Performance:** Leveraging `ProcessPoolExecutor` for concurrent file copying achieves high throughput. Its non-blocking asynchronous design means Data Guardian works quietly in the background, ensuring your system's performance remains smooth and responsive, even during backup operations.
 
-- **Comprehensive Application Backup**
-  - Saves a list of installed Flatpak applications regularly.
+- **Comprehensive Application Backup: Restore Your Full Environment**
+  - **Beyond Just Files:** Data Guardian regularly saves a list of your installed Flatpak applications, simplifying the process of getting your system back up and running.
   - *(Work in Progress)* Plans to backup `.deb` and `.rpm` packages for full environment restoration.
 
-- **Modern, User-Friendly GUI**
-  - Built with GTK4 and Adwaita for a polished, native Linux experience.
-  - Browse and restore individual files from `.main_backup` and incremental snapshots.
-  - System Restore feature to recover applications, Flatpaks, and home directory data post-OS reinstall.
-  - File preview support for common formats, including PDF and text.
-  - Manage backup settings: device selection, auto-backup toggle, ignored folders, and more.
+- **Modern, User-Friendly GUI: Intuitive Control Center**
+  - **Polished Native Experience:** Enjoy a sleek interface built with GTK4 and Libadwaita, offering a polished, native Linux experience.
+  - **Effortless File Recovery:** Easily browse through your `.main_backup` and all incremental snapshots. Restore individual files or entire folders with just a few clicks.
+  - **Powerful System Restore:** Facing an OS reinstall? Data Guardian's System Restore feature helps you quickly recover your applications (including Flatpaks), and your entire home directory data, minimizing downtime.
+  - **Preview Before Restoring:** Quickly preview common file formats like PDF and text directly within the application, ensuring you restore the correct version every time.
+  - **Complete Configuration:** Easily manage all your backup preferences: select your backup device, toggle auto-backup, define ignored folders, and fine-tune other settings to match your workflow.
 
-- **Resilient & Configurable Daemon**
+- **Resilient & Configurable Daemon: Advanced Control**
   - Signal handling for pause, resume, and graceful shutdown.
   - Responsive to device connection changes.
   - Configurable concurrency and wait intervals.
   - Detailed logging to file and console.
 
 ---
-
 ## ⚙️ How Data Guardian Works (Simplified)
 
-1. **Setup via GUI**
-   - Select backup drive.
-   - Configure auto-backup, ignored folders, and other preferences.
+1. **Effortless Initial Setup**
+   - Simply launch the GUI and select your preferred external drive for backups.
+   - Customize your backup strategy: enable automatic backups, specify any folders or file types to ignore, and adjust other settings to your liking.
 
-2. **Daemon Operation**
-   - On start, performs a full scan and backup to `.main_backup`.
-   - Periodically rescans home directory using cached metadata to detect changes.
-   - Copies new files to `.main_backup`.
-   - Stores updated files in timestamped incremental folders for versioning.
-   - Saves installed Flatpak app list for easy restoration.
+2. **The Guardian Daemon: Your Automated Protector**
+   - **Initial Safeguard:** When first activated (or after setup), the daemon performs a comprehensive full scan of your home directory and creates the initial complete backup in the `.main_backup` folder on your chosen drive.
+   - **Constant Vigilance, Minimal Impact:** The daemon then runs quietly in the background, periodically rescanning your home directory. It cleverly uses cached metadata to rapidly detect any new or modified files without bogging down your system.
+   - **Keeping Your Main Backup Current:** Any brand-new files are efficiently copied to your `.main_backup`.
+   - **Smart Incremental Updates for Version History:** When files are modified, Data Guardian doesn't overwrite your main backup. Instead, it saves these updated versions into separate, clearly timestamped incremental folders. This approach saves significant disk space and gives you a powerful version history, allowing you to roll back to previous states of your files.
+   - **Application Blueprint:** It also diligently keeps an up-to-date list of your installed Flatpak applications, making it much easier to restore your software environment.
 
-3. **File Restoration**
-   - GUI allows browsing backup snapshots.
-   - Restore individual files or run a system-wide restore.
-   - Preview files before restoring.
+3. **Restoring Your Data: Simple, Flexible, and Fast**
+   - **Navigate Your Backup History:** The user-friendly GUI provides a clear view of all your backup snapshots – both the main backup and all incremental versions. Finding what you need is straightforward.
+   - **Pinpoint Recovery or Full System Rollback:** Whether you need to recover a single accidentally deleted file or perform a comprehensive system-wide restore (including applications and home directory data after an OS reinstall), Data Guardian offers the flexibility you need.
+   - **Confirm Before You Commit:** For added confidence, you can preview common file types directly within the GUI before initiating a restore, ensuring you're recovering exactly what you intend.
 
 ---
 
@@ -130,4 +126,3 @@ Data Guardian is intended to be installed as a Flatpak for the best user experie
 ### Running the GUI
 
 After manual installation (if it includes desktop integration steps), the app may appear in your system's main application menu.
-
