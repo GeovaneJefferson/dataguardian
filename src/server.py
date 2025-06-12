@@ -301,7 +301,7 @@ class SERVER:
 
 	def get_log_file_path(self) -> str:
 		"""Get the path to the log file."""
-		return f"{self.create_base_folder()}/.logging_ui.log"
+		return self.LOG_FILE_PATH
 	
 	def get_interrupted_main_file(self) -> str:
 		"""Get the path to the interrupted main file."""

@@ -2,7 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 from has_driver_connection import has_driver_connection
 from server import *
 
-WAIT_TIME = 5  # Minutes between backup checks
+WAIT_TIME = 1  # Minutes between backup checks
 COPY_CONCURRENCY = 4  # Max parallel copy tasks
 
 
@@ -78,6 +78,31 @@ class Daemon:
         logging.info(f"Received resume signal {signum}, resuming operations.")
         self.suspend_flag = False
 
+    def is_backup_location_writable(self) -> bool:
+        """Checks if the base backup folder is writable."""
+        base_path = server.create_base_folder()
+        # Check if the path itself can be formed (e.g. DRIVER_LOCATION is set)
+        if not base_path:
+            logging.error("Backup base path is not configured (DRIVER_LOCATION might be empty). Cannot check writability.")
+            return False
+
+        if not os.path.exists(base_path):
+            try:
+                os.makedirs(base_path, exist_ok=True)
+            except OSError as e:
+                logging.error(f"Backup base path {base_path} does not exist and cannot be created: {e}")
+                return False
+        
+        test_file_path = os.path.join(base_path, ".writetest.tmp")
+        try:
+            with open(test_file_path, "w") as f:
+                f.write("test")
+            os.remove(test_file_path)
+            return True
+        except OSError as e:
+            logging.error(f"Backup location {base_path} is not writable: {e}")
+            return False
+
     def file_hash(self, path: str) -> str:
         """Compute SHA-256 hash of a file."""
         try:
@@ -128,14 +153,14 @@ class Daemon:
                     try:
                         b_stat = os.stat(backup_file_path)
                         if b_stat.st_size != current_stat.st_size or abs(b_stat.st_mtime - current_stat.st_mtime) > 1:
-                            logging.info(f"File '{rel_path}' updated (size/mtime mismatch with incremental backup {backup_file_path}). Src size: {current_stat.st_size}, Dst size: {b_stat.st_size}. Src mtime: {current_stat.st_mtime}, Dst mtime: {b_stat.st_mtime}")
+                            # logging.info(f"File '{rel_path}' updated (size/mtime mismatch with incremental backup {backup_file_path}). Src size: {current_stat.st_size}, Dst size: {b_stat.st_size}. Src mtime: {current_stat.st_mtime}, Dst mtime: {b_stat.st_mtime}")
                             return True
                         if self.file_hash(src) != self.file_hash(backup_file_path):
-                            logging.info(f"File '{rel_path}' updated (hash mismatch with incremental backup {backup_file_path}).")
+                            # logging.info(f"File '{rel_path}' updated (hash mismatch with incremental backup {backup_file_path}).")
                             return True
                         return False
                     except Exception as e:
-                        logging.warning(f"Error comparing '{src}' with incremental backup '{backup_file_path}': {e}. Trying older versions or main.")
+                        # logging.warning(f"Error comparing '{src}' with incremental backup '{backup_file_path}': {e}. Trying older versions or main.")
                         continue
 
         main_path = os.path.join(self.main_backup_dir, rel_path)
@@ -143,15 +168,16 @@ class Daemon:
             try:
                 b_stat = os.stat(main_path)
                 if b_stat.st_size != current_stat.st_size or abs(b_stat.st_mtime - current_stat.st_mtime) > 1:
-                    logging.info(f"File '{rel_path}' updated (size/mtime mismatch with main backup {main_path}). Src size: {current_stat.st_size}, Dst size: {b_stat.st_size}. Src mtime: {current_stat.st_mtime}, Dst mtime: {b_stat.st_mtime}")
+                    # logging.info(f"File '{rel_path}' updated (size/mtime mismatch with main backup {main_path}). Src size: {current_stat.st_size}, Dst size: {b_stat.st_size}. Src mtime: {current_stat.st_mtime}, Dst mtime: {b_stat.st_mtime}")
                     return True
                 if self.file_hash(src) != self.file_hash(main_path):
-                    logging.info(f"File '{rel_path}' updated (hash mismatch with main backup {main_path}).")
+                    # logging.info(f"File '{rel_path}' updated (hash mismatch with main backup {main_path}).")
                     return True
                 return False # Explicitly return False if it matches the main backup
             except Exception as e:
-                logging.warning(f"Error comparing '{src}' with main backup '{main_path}': {e}. Assuming update needed.")
+                # logging.warning(f"Error comparing '{src}' with main backup '{main_path}': {e}. Assuming update needed.")
                 return True
+            
         # If no backup (main or incremental) exists, or if main backup comparison failed, it's considered new/updated.
         logging.info(f"File '{rel_path}' is new or no existing valid backup was definitively matched. Marking for backup.")
         return True # Default to True if no existing backup is found or if errors occurred in main comparison
@@ -198,6 +224,7 @@ class Daemon:
 
             # Send initial progress
             initial_msg = {
+                "type": "transfer_progress",
                 "id": file_id,
                 "filename": filename,
                 "size": human_readable_size,
@@ -237,6 +264,7 @@ class Daemon:
                                     eta_str = "stalled"
                             
                             progress_msg = {
+                                "type": "transfer_progress",
                                 "id": file_id, 
                                 "filename": filename, 
                                 "size": human_readable_size, 
@@ -255,6 +283,7 @@ class Daemon:
 
                 logging.info(f"Backed up: {src} -> {dst}")
                 final_msg = {
+                    "type": "transfer_progress",
                     "id": file_id, 
                     "filename": filename, 
                     "size": human_readable_size, 
@@ -267,7 +296,14 @@ class Daemon:
                         os.remove(tmp_dst)
                 except Exception:
                     pass
-                error_msg = {"id": file_id, "filename": filename, "size": human_readable_size, "eta": "error", "progress": prev_progress if prev_progress > 0 else 0.0, "error": str(e)}
+                error_msg = {
+                    "type": "transfer_progress", # Or a dedicated "transfer_error" type
+                    "id": file_id,
+                    "filename": filename,
+                    "size": human_readable_size,
+                    "eta": "error",
+                    "progress": prev_progress if prev_progress > 0 else 0.0,
+                    "error": str(e)}
                 send_to_ui(json.dumps(error_msg))
 
     def load_folder_metadata(self, top_rel_path):
@@ -287,12 +323,16 @@ class Daemon:
             os.makedirs(os.path.dirname(meta_path), exist_ok=True)
 
             with tempfile.NamedTemporaryFile('w', delete=False, dir=os.path.dirname(meta_path)) as tmpf:
-                json.dump(metadata, tmpf)
+                json.dump(metadata, tmpf, indent=4) # Added indent for readability
                 temp_path = tmpf.name
-
+            # Ensure data is written to disk before replacing
+            # For NamedTemporaryFile, flush and fsync can be explicit if needed,
+            # but os.replace is atomic on POSIX if src and dst are on the same filesystem.
             os.replace(temp_path, meta_path)
-        except Exception:
-            pass
+        except OSError as e:
+            logging.error(f"OSError while saving folder metadata for {top_rel_path} at {meta_path}: {e}")
+        except Exception as e:
+            logging.error(f"Unexpected error while saving folder metadata for {top_rel_path} at {meta_path}: {e}")
         
     def folder_needs_check(self, rel_folder, current_meta, cached_meta):
         cached = cached_meta.get(rel_folder)
@@ -312,17 +352,20 @@ class Daemon:
         time_str = now.strftime('%H-%M')
         session_backup_dir = os.path.join(self.update_backup_dir, date_str, time_str)
 
-        logging.info("Starting scan and backup...")
-
         # Reload ignored folders and hidden items preference at the start of each scan
         self.ignored_folders = set(os.path.abspath(p) for p in server.load_ignored_folders_from_config())
         exclude_hidden_master_switch = server.get_database_value(section='EXCLUDE', option='exclude_hidden_itens')
         if exclude_hidden_master_switch is None: # Default to True if not set
             exclude_hidden_master_switch = True
 
-        with open(self.interruped_main_file, 'w') as f:
-            f.write("interrupted")
-
+        try:
+            with open(self.interruped_main_file, 'w') as f:
+                f.write("interrupted")
+        except OSError as e:
+            logging.error(f"Could not write to interrupted_main_file {self.interruped_main_file}: {e}. "
+                          "Backup may not resume correctly if interrupted again. "
+                          "This may indicate a read-only filesystem.")
+            # Depending on severity, might return or raise to stop the backup cycle
         for entry in os.scandir(self.user_home):
             if (exclude_hidden_master_switch and entry.name.startswith('.')) or \
                entry.name in self.excluded_dirs:
@@ -335,68 +378,91 @@ class Daemon:
             if any(os.path.commonpath([src_path, ign]) == ign for ign in self.ignored_folders):
                 continue
 
-            cached_meta = self.load_folder_metadata(top_level_rel_path)
-            new_meta = {}
+            if entry.is_dir():
+                cached_meta = self.load_folder_metadata(top_level_rel_path)
+                new_meta = {}
 
-            for root, dirs, files in os.walk(src_path):
-                # Filter directories based on hidden status and excluded_dirs
-                dirs[:] = [d for d in dirs if not ((exclude_hidden_master_switch and d.startswith('.')) or \
-                                                   d in self.excluded_dirs)]
-                send_to_ui(json.dumps({
-                    "type": "scanning",
-                    "folder": os.path.relpath(root, self.user_home).replace("\\", "/")
-                }))
-                subfolder_key = os.path.relpath(root, src_path).replace("\\", "/")
-    
-                current_meta = compute_folder_metadata(
-                    root,
-                    # Pass effective excluded dirs and exts, respecting hidden switch for this computation
-                    excluded_dirs=self.excluded_dirs, # compute_folder_metadata handles its own dotfile logic if not overridden
-                    excluded_exts=self.excluded_exts  # compute_folder_metadata handles its own dotfile logic
-                )
-                new_meta[subfolder_key] = current_meta
+                for root, dirs, files_in_dir in os.walk(src_path): # Renamed 'files' to 'files_in_dir'
+                    # Filter directories based on hidden status and excluded_dirs
+                    dirs[:] = [d for d in dirs if not ((exclude_hidden_master_switch and d.startswith('.')) or \
+                                                       d in self.excluded_dirs)]
+                    send_to_ui(json.dumps({
+                        "type": "scanning",
+                        "folder": os.path.relpath(root, self.user_home).replace("\\", "/")
+                    }))
+                    subfolder_key = os.path.relpath(root, src_path).replace("\\", "/")
+        
+                    current_meta = compute_folder_metadata(
+                        root,
+                        excluded_dirs=self.excluded_dirs,
+                        excluded_exts=self.excluded_exts
+                    )
+                    new_meta[subfolder_key] = current_meta
 
-                if not self.folder_needs_check(subfolder_key, current_meta, cached_meta):
-                    continue
-
-                for f in files:
-                    if (exclude_hidden_master_switch and f.startswith('.')) or \
-                       any(f.endswith(ext) for ext in self.excluded_exts):
+                    if not self.folder_needs_check(subfolder_key, current_meta, cached_meta):
                         continue
 
-                    fsrc = os.path.join(root, f)
-                    frel = os.path.relpath(fsrc, self.user_home)
-                    main_path = os.path.join(self.main_backup_dir, frel)
+                    for f_in_dir_loop in files_in_dir: # Renamed 'f' to avoid conflict
+                        if (exclude_hidden_master_switch and f_in_dir_loop.startswith('.')) or \
+                           any(f_in_dir_loop.endswith(ext) for ext in self.excluded_exts):
+                            continue
 
-                    if not os.path.exists(main_path):
-                        tasks.append(self.copy_file(fsrc, main_path, frel))
-                    elif self.file_was_updated(fsrc, frel):
-                        session_backup_path = os.path.join(session_backup_dir, frel)
-                        tasks.append(self.copy_file(fsrc, session_backup_path, frel))
+                        fsrc_loop = os.path.join(root, f_in_dir_loop)
+                        frel_loop = os.path.relpath(fsrc_loop, self.user_home)
+                        main_path_loop = os.path.join(self.main_backup_dir, frel_loop)
 
-            self.save_folder_metadata(top_level_rel_path, new_meta)
+                        if not os.path.exists(main_path_loop):
+                            tasks.append(self.copy_file(fsrc_loop, main_path_loop, frel_loop))
+                        elif self.file_was_updated(fsrc_loop, frel_loop):
+                            session_backup_path_loop = os.path.join(session_backup_dir, frel_loop)
+                            tasks.append(self.copy_file(fsrc_loop, session_backup_path_loop, frel_loop))
+
+                self.save_folder_metadata(top_level_rel_path, new_meta)
+            
+            elif entry.is_file():
+                # This is a top-level file in user_home
+                fsrc = src_path 
+                frel = top_level_rel_path # Relative path of the top-level file
+
+                # Apply hidden/excluded extension checks for top-level files
+                if (exclude_hidden_master_switch and entry.name.startswith('.')) or \
+                   any(entry.name.endswith(ext) for ext in self.excluded_exts):
+                    continue
+                
+                main_path = os.path.join(self.main_backup_dir, frel)
+
+                if not os.path.exists(main_path):
+                    tasks.append(self.copy_file(fsrc, main_path, frel))
+                elif self.file_was_updated(fsrc, frel):
+                    session_backup_path = os.path.join(session_backup_dir, frel)
+                    tasks.append(self.copy_file(fsrc, session_backup_path, frel))
     
         if tasks:
             await asyncio.gather(*tasks)
             server.update_recent_backup_information()
             # After backup tasks are complete, generate the summary
             try:
-                # Assuming generate_backup_summary.py is in the same directory or on PATH
-                # and server.py is correctly imported there.
                 sub.run(['python3', os.path.join(os.path.dirname(__file__), 'generate_backup_summary.py')], check=True)
             except Exception as e:
                 logging.error(f"Failed to generate backup summary: {e}")
             logging.info("Backup session complete.")
-    
-        if os.path.exists(self.interruped_main_file):
-            os.remove(self.interruped_main_file)
+        
+        try:
+            if os.path.exists(self.interruped_main_file):
+                os.remove(self.interruped_main_file)
+        except OSError as e:
+            logging.error(f"Could not remove interrupted_main_file {self.interruped_main_file}: {e}. "
+                          "This may indicate a read-only filesystem.")
         
     async def resume_from_interruption(self):
         if os.path.exists(self.interruped_main_file):
-            logging.info("Resuming from previous interrupted backup session...")
-            await self.scan_and_backup()
-            os.remove(self.interruped_main_file)
-
+            logging.info("Interrupted backup session file found.")
+            if self.is_backup_location_writable():
+                logging.info("Backup location is writable. Attempting to resume interrupted backup...")
+                await self.scan_and_backup() 
+            else:
+                logging.warning("Backup location not writable. Cannot resume interrupted backup at this time. Will retry later.")
+                
     async def run(self):
         await self.resume_from_interruption()
         shutdown_event = asyncio.Event()
@@ -410,19 +476,37 @@ class Daemon:
         signal.signal(signal.SIGTSTP, self.signal_handler)  # Suspend (Ctrl+Z)
         signal.signal(signal.SIGCONT, self.resume_handler)  # Resume
 
+        logging.info("Starting scan and backup...")
+
         while not self.should_exit:
             if self.suspend_flag:
                 logging.info("Daemon suspended... sleeping.")
                 await asyncio.sleep(5)
                 continue
 
-            if not os.path.exists(server.DAEMON_PID_LOCATION):
+            if not os.path.exists(server.DAEMON_PID_LOCATION): # Check if daemon should still be running
+                logging.warning("Daemon PID file not found. Shutting down.")
                 self.signal_handler(signal.SIGTERM, None)
                 break
 
             if has_driver_connection():
-                await self.scan_and_backup()
+                if self.is_backup_location_writable():
+                    # Reset a flag indicating writability issue if it was set
+                    self.had_writability_issue = False
+                    await self.scan_and_backup()
+                else:
+                    # Log critical only if this is a new or persistent issue
+                    if not getattr(self, "had_writability_issue", False):
+                        logging.critical(f"[CRITICAL]: Backup location {server.create_base_folder()} is not writable. Automatic backups will be disabled by the UI if running.")
+                        self.had_writability_issue = True # Set flag to avoid repeated critical logs for the same issue in one session
+                    else:
+                        logging.error(f"Backup location {server.create_base_folder()} is still not writable. Skipping backup cycle.")
+            else:
+                logging.info("Backup drive not connected. Skipping backup cycle.")
+                if getattr(self, "had_writability_issue", False): # Reset if drive disconnected
+                    self.had_writability_issue = False
 
+            logging.debug(f"Waiting for {WAIT_TIME} minutes before next cycle.")
             total_wait = WAIT_TIME * 60
             interval = 1
             elapsed = 0
@@ -433,15 +517,24 @@ class Daemon:
                     break
                 except asyncio.TimeoutError:
                     elapsed += interval
+            
+            # Check if auto backup is still enabled
+            auto_backup_enabled = server.get_database_value('BACKUP', 'automatically_backup')
+            if str(auto_backup_enabled).lower() != 'true':
+                logging.info("Automatic backup is disabled in configuration. Daemon initiated by auto-start will shut down.")
+                self.signal_handler(signal.SIGTERM, None) # Trigger shutdown
+                break # Exit the loop
 
 
 if __name__ == "__main__":
     server = SERVER()
 
+    # Ensure the directory for the log file exists, attempt to create if not.
+    # This is important if DRIVER_LOCATION is initially unavailable.
     log_file_path = server.get_log_file_path()
-    if os.path.exists(log_file_path):
-        os.remove(log_file_path)
-    os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
+    # if os.path.exists(log_file_path): # Optional: remove old log on start
+    #     os.remove(log_file_path)
+    os.makedirs(os.path.dirname(log_file_path), exist_ok=True) 
     
     formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
     logger = logging.getLogger()

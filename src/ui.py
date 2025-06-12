@@ -185,6 +185,7 @@ class BackupWindow(Adw.ApplicationWindow):
     
         self.populate_latest_backups()  # At startup populate with latest backups results
         # self.update_overview_cards_from_summary() # Load summary data for overview cards
+        self._check_for_critical_log_errors() # Check for critical errors at startup
         threading.Thread(target=self.start_server, daemon=True).start()  # Start the socket server in a separate thread
 
         # Grab searchbar focus on startup
@@ -256,7 +257,7 @@ class BackupWindow(Adw.ApplicationWindow):
 
         # --- Latest Backups/Search Resulst Section ---
         self.top_center_label = Gtk.Label(xalign=0)
-        self.top_center_label.add_css_class("title-3") # Ensure .title-3 is styled in your CSS
+        self.top_center_label.add_css_class("title-4") # Ensure .title-3 is styled in your CSS
         self.top_center_label.set_margin_top(12) # Space will be from previous section's bottom margin
         self.top_center_label.set_margin_bottom(12) # Space between title and listbox
         center_box.append(self.top_center_label)
@@ -322,7 +323,7 @@ class BackupWindow(Adw.ApplicationWindow):
         if not hasattr(self, '_add_dynamic_css_rule'):
             self._add_dynamic_css_rule = self._default_add_dynamic_css_rule_impl
         
-        left_sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
+        left_sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         left_sidebar.set_size_request(240, -1) # Slightly wider for device info
         left_sidebar.add_css_class("left-sidebar")
         left_sidebar.set_margin_top(12)
@@ -361,9 +362,7 @@ class BackupWindow(Adw.ApplicationWindow):
         self.transfer_section_title_label.set_hexpand(False)
 
         self.transfer_listbox = Gtk.ListBox()
-        self.transfer_listbox.set_vexpand(True) # Allow it to take available vertical space
-        self.transfer_listbox.add_css_class("card") # Apply card style to the ListBox
-        
+        self.transfer_listbox.set_vexpand(True) # Allow it to take available vertical space        
         self.transfer_listbox.set_margin_top(0) # No top margin, space will be from the header
         self.transfer_listbox.set_margin_bottom(0)
         self.transfer_listbox.set_margin_start(0)
@@ -378,9 +377,6 @@ class BackupWindow(Adw.ApplicationWindow):
         self.transfer_scrolled_window.set_margin_start(0)
         self.transfer_scrolled_window.set_margin_end(0)
 
-        self.restore_progressbar = Gtk.ProgressBar()
-        self.restore_progressbar.set_hexpand(False) # Allow it to take available horizontal space
-        # Current Scan Status Card (initialized in __init__)
         self.current_scan_status_card.set_margin_bottom(0)
         self.current_scan_status_card.set_visible(False) # Initially hidden
 
@@ -393,7 +389,7 @@ class BackupWindow(Adw.ApplicationWindow):
         self.transfer_section_title_label.set_margin_bottom(0)
         self.transfer_section_title_label.set_margin_start(0) # Align with the left sidebar
         self.transfer_section_title_label.set_margin_end(0)
-        self.transfer_section_title_label.set_visible(False) # Initially hidden
+        self.transfer_section_title_label.set_visible(False) # Initially hidden, shown by _update_left_panel_visibility
         left_sidebar.append(self.transfer_section_title_label)
 
         # Transfer Scrolled Window (initialized in __init__)
@@ -404,14 +400,14 @@ class BackupWindow(Adw.ApplicationWindow):
         left_sidebar.append(self.transfer_scrolled_window)
 
         # Overall Usage
-        usage_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6) # Main container for this section
-        usage_box.set_margin_top(0) # No top margin, space will be from the header
-        usage_box.set_margin_bottom(0)
-        usage_box.set_margin_start(12) # No left margin, space will be from the left sidebar
-        usage_box.set_margin_end(12)
-        usage_box.set_hexpand(True) # Allow it to take available horizontal space
-        usage_box.set_vexpand(False)
-        # usage_box.add_css_class("card") # Add a card class for styling
+        self.usage_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6) # Main container for this section
+        self.usage_box.set_margin_top(0) # No top margin, space will be from the header
+        self.usage_box.set_margin_bottom(0)
+        self.usage_box.set_margin_start(0) # No left margin, space will be from the left sidebar
+        self.usage_box.set_margin_end(0)
+        self.usage_box.set_hexpand(True) # Allow it to take available horizontal space
+        self.usage_box.set_vexpand(False)
+        self.usage_box.add_css_class("card") # Add a card class for styling
         
         # --- Get device usage info ---
         total_size_str = "N/A"
@@ -435,13 +431,13 @@ class BackupWindow(Adw.ApplicationWindow):
         # --- End get device usage info ---
 
         # Detailed breakdown
-        details_list = Gtk.ListBox()
-        details_list.set_margin_top(0) # Space above the details list
-        details_list.set_margin_bottom(0) # Space below the details list
-        details_list.set_margin_start(0)
-        details_list.set_margin_end(0)
-        details_list.set_selection_mode(Gtk.SelectionMode.NONE)
-        details_list.add_css_class("card")
+        self.details_list = Gtk.ListBox()
+        self.details_list.set_margin_top(0) # Space above the details list
+        self.details_list.set_margin_bottom(0) # Space below the details list
+        self.details_list.set_margin_start(0)
+        self.details_list.set_margin_end(0)
+        self.details_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.details_list.add_css_class("card")
 
         # Define mappings for icons and colors
         category_icons = {
@@ -547,10 +543,10 @@ class BackupWindow(Adw.ApplicationWindow):
             return row
 
         if not items_from_summary: # Fallback or empty state
-            details_list.append(_create_detail_row("No summary data", default_icon, default_color, "0 files", "0 B"))
+            self.details_list.append(_create_detail_row("No summary data", default_icon, default_color, "0 files", "0 B"))
         else:
             for item_data in items_from_summary:
-                details_list.append(_create_detail_row(item_data["name"], item_data["icon_name"], item_data["color_hex"], item_data["count"], item_data["size"]))
+                self.details_list.append(_create_detail_row(item_data["name"], item_data["icon_name"], item_data["color_hex"], item_data["count"], item_data["size"]))
         
 
         # This widget will take up all the extra space
@@ -560,56 +556,107 @@ class BackupWindow(Adw.ApplicationWindow):
         # Horizontal Box for Device Name and Status Icon
         device_name_and_status_hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         # Margins from original device_name_label, applied to the HBox
-        device_name_and_status_hbox.set_margin_start(6)
-        device_name_and_status_hbox.set_margin_bottom(4) # Space before progress bar
+        device_name_and_status_hbox.set_margin_top(6) # No top margin, space will be from the header
+        device_name_and_status_hbox.set_margin_bottom(0) # Space before progress bar
+        device_name_and_status_hbox.set_margin_start(12)
+        device_name_and_status_hbox.set_margin_end(0) # Space on the right side
 
-        left_sidebar.append(spacer)
-        
         # Status Icon
         self.status_icon = Gtk.Image()
         self.status_icon.set_pixel_size(16) # Consistent icon size
+        self.status_icon.set_margin_top(6) # No top margin, space will be from the header
+        self.status_icon.set_margin_bottom(6) # Space before progress bar
+        self.status_icon.set_margin_start(12)
+        self.status_icon.set_margin_end(12) # Space on the right side
+
         self.current_daemon_state = "idle" # Initial state, will be updated
 
         # Device Name Label
-        device_name_label_text = self.driver_name if self.driver_name else "N/A"
-        device_name_label = Gtk.Label(label=device_name_label_text)
-        device_name_label.add_css_class("title-4") # Or "caption" or other appropriate style
-        device_name_label.set_xalign(0) # Align text to the left within its allocation
-        device_name_label.set_hexpand(True) # Allow label to take available space
-        device_name_and_status_hbox.append(device_name_label)
+        self.device_name_label_text = self.driver_name if self.driver_name else "N/A" # Store initial text
+        self.device_name_label = Gtk.Label(label=self.device_name_label_text)
+        self.device_name_label.add_css_class("title-4") # Or "caption" or other appropriate style
+        self.device_name_label.set_xalign(0) # Align text to the left within its allocation
+        self.device_name_label.set_hexpand(True) # Allow label to take available space
+        device_name_and_status_hbox.append(self.device_name_label)
 
         # Status Icon (already initialized in __init__)
         self.status_icon.set_valign(Gtk.Align.CENTER) # Vertically align with the device name
         device_name_and_status_hbox.append(self.status_icon)
-        usage_box.append(device_name_and_status_hbox)
+        self.usage_box.append(device_name_and_status_hbox)
 
         # Progress bar first
-        progress_bar = Gtk.ProgressBar(fraction=fraction)
-        progress_bar.set_margin_start(6) # Add some horizontal margin
-        progress_bar.set_margin_end(6)   # Add some horizontal margin
-        usage_box.append(progress_bar)
+        self.usage_progress_bar = Gtk.ProgressBar(fraction=fraction)
+        self.usage_progress_bar.set_margin_top(0) # No top margin, space will be from the header
+        self.usage_progress_bar.set_margin_bottom(0) # Space before progress bar
+        self.usage_progress_bar.set_margin_start(12)
+        self.usage_progress_bar.set_margin_end(12) # Space on the right side
+        self.usage_box.append(self.usage_progress_bar)
         
         # Combined usage label
-        combined_usage_label = Gtk.Label(label=f"{used_size_str} of {total_size_str}")
-        combined_usage_label.add_css_class("caption") # Make text smaller
-        combined_usage_label.set_xalign(0) # Align left
-        combined_usage_label.set_margin_start(6) # Match progress bar margin
-        combined_usage_label.set_margin_end(6)   # Match progress bar margin
-        combined_usage_label.set_margin_top(2) # Small space between progress bar and label
-        usage_box.append(combined_usage_label)
+        self.combined_usage_label = Gtk.Label(label=f"{used_size_str} of {total_size_str}")
+        self.combined_usage_label.add_css_class("caption") # Make text smaller
+        self.combined_usage_label.set_xalign(0) # Align left
+        self.combined_usage_label.set_margin_top(0) # No top margin, space will be from the header
+        self.combined_usage_label.set_margin_bottom(6) # Space before progress bar
+        self.combined_usage_label.set_margin_start(12)
+        self.combined_usage_label.set_margin_end(12) # Space on the right side
+        self.usage_box.append(self.combined_usage_label)
 
-        # Add the restore progress bar to the usage_box
-        # self.restore_progressbar.set_hexpand(True)
-        self.restore_progressbar.set_margin_top(6) # Add some space above the progress bar
-        self.restore_progressbar.set_visible(False) # Initially hidden
-        usage_box.append(self.restore_progressbar)
-
-        left_sidebar.append(details_list)
+        left_sidebar.append(spacer)
+        left_sidebar.append(self.details_list)
         left_sidebar.append(self.current_scan_status_card)
-        left_sidebar.append(usage_box)
+        left_sidebar.append(self.usage_box)
 
         self.folder_scan_status_box = left_sidebar # Keep reference if needed elsewhere
         self.main_content.append(left_sidebar) # Add to the main horizontal box
+
+    def _check_for_critical_log_errors(self):
+        log_file_path = server.get_log_file_path()
+        last_critical_message = None
+        try:
+            if os.path.exists(log_file_path):
+                with open(log_file_path, 'r') as f:
+                    for line in f:
+                        if "[CRITICAL]" in line:
+                            # Extract message part after "[CRITICAL] "
+                            parts = line.split("[CRITICAL] ", 1)
+                            if len(parts) > 1:
+                                last_critical_message = parts[1].strip()
+                            else: # Fallback if format is slightly off
+                                last_critical_message = line.strip()
+        except Exception as e:
+            print(f"Error reading log file for critical errors: {e}")
+            return
+
+        if last_critical_message:
+            print(f"CRITICAL ERROR DETECTED: {last_critical_message}")
+            GLib.idle_add(self._show_critical_error_dialog, last_critical_message)
+            GLib.idle_add(self._disable_auto_backup_due_to_critical_error)
+
+    def _show_critical_error_dialog(self, critical_message_text):
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            modal=True,
+            title="Critical Error",
+            heading="A critical error has occurred:",
+            body=critical_message_text + "\n\nAutomatic backup has been disabled. Please resolve the issue and restart the application."
+        )
+        dialog.add_response("ok", "OK")
+        dialog.add_response("problem-fixed", "Problem Fixed")
+        dialog.set_response_appearance("problem-fixed", Adw.ResponseAppearance.DESTRUCTIVE) # Or .SUGGESTED
+
+        def on_dialog_response(d, response_id):
+            if response_id == "problem-fixed":
+                if os.path.exists(server.get_log_file_path()):
+                    os.remove(server.get_log_file_path())
+            d.close()
+        dialog.connect("response", on_dialog_response)
+        dialog.present()
+
+    def _disable_auto_backup_due_to_critical_error(self):
+        print("Disabling automatic backup due to critical error.")
+        server.set_database_value('BACKUP', 'automatically_backup', 'false')
+        # The daemon should pick up this change and stop if it was running due to auto-backup.
 
     # Helper method to add dynamic CSS rules (should be part of BackupWindow class)
     # This is a default implementation if you don't have one.
@@ -651,6 +698,7 @@ class BackupWindow(Adw.ApplicationWindow):
         self.driver_location = server.get_database_value(section='DRIVER', option='driver_location')
         self.driver_name = server.get_database_value(section='DRIVER', option='driver_name')
         self.enable_ui_stuff(device_selected)
+        GLib.idle_add(self._refresh_left_sidebar_summary_and_usage) # Refresh on device change
         # Update daemon state based on new connection status
         self._set_initial_daemon_state_and_update_icon()
         
@@ -679,6 +727,10 @@ class BackupWindow(Adw.ApplicationWindow):
         elif self.current_daemon_state == "copying":
             icon_name = "emblem-synchronizing-symbolic" # Or "media-floppy-symbolic"
             tooltip = "Backing up files..."
+        elif self.current_daemon_state == "restoring":
+            icon_name = "document-revert-symbolic" # Icon for restoring
+            tooltip = "Restoring files..."
+
         # "idle" uses the default icon_name and tooltip
 
         self.status_icon.set_from_icon_name(icon_name)
@@ -766,12 +818,23 @@ class BackupWindow(Adw.ApplicationWindow):
                                     self.current_daemon_state = "idle"
                             # If transfers are active, state will become "copying" from transfer messages
                         GLib.idle_add(self.update_scanning_folder_display, folder_being_scanned)
-                    else: # Default to transfer update
+                    elif msg_type == "transfer_progress": # Explicitly handle transfer progress
                         self.current_daemon_state = "copying"
                         GLib.idle_add(self.update_or_create_transfer, file_id, filename, size, eta, progress)
-                        # When transfers start, imply scanning of current top-level folder is done or all scans are done.
-                        # GLib.idle_add(self._update_folder_scan_status_display, None) # This might be too aggressive
-                        # GLib.idle_add(self.update_scanning_folder_display, None) # Signal scan phase might be ending for current folder
+                        # When transfers start, scanning of current top-level folder is done or all scans are done.
+                        GLib.idle_add(self.update_scanning_folder_display, None) # Hide scanning card
+                    elif msg_type == "summary_updated":
+                        GLib.idle_add(self._refresh_left_sidebar_summary_and_usage)
+                        GLib.idle_add(self.update_scanning_folder_display, None) # Ensure scanning display is cleared
+                        # If no transfers are active, transition to idle or interrupted
+                        if not self.transfer_rows:
+                            if os.path.exists(server.get_interrupted_main_file()):
+                                self.current_daemon_state = "interrupted" #NOSONAR
+                            else:
+                                self.current_daemon_state = "idle"
+                    elif msg_type == "restoring_file":
+                        # This message type is no longer handled here for UI-initiated restores
+                        pass
 
                     if current_state_before_message != self.current_daemon_state:
                         GLib.idle_add(self._update_status_icon_display)
@@ -848,6 +911,74 @@ class BackupWindow(Adw.ApplicationWindow):
             if self.current_daemon_state != new_final_state:
                 self.current_daemon_state = new_final_state
                 GLib.idle_add(self._update_status_icon_display) # Update icon
+                GLib.idle_add(self.update_scanning_folder_display, None) # Also hide scanning card
+
+
+    def _refresh_left_sidebar_summary_and_usage(self):
+        """Refreshes the backup summary details and device usage in the left sidebar."""
+        # 1. Refresh Backup Summary Details (self.details_list)
+        # Clear existing items from self.details_list
+        child = self.details_list.get_first_child()
+        while child:
+            self.details_list.remove(child)
+            child = self.details_list.get_first_child()
+
+        # Define mappings for icons and colors (can be moved to a shared place or class constants if used elsewhere)
+        category_icons = {
+            "Image": "image-x-generic-symbolic", "Video": "video-x-generic-symbolic",
+            "Document": "x-office-document-symbolic", "Others": "application-x-addon-symbolic",
+        }
+        default_icon = "dialog-question-symbolic"
+        category_colors = {
+            "Image": "#EA4335", "Video": "#4285F4", "Document": "#34A853", "Others": "#FBBC04",
+        }
+        default_color = "#9E9E9E"
+
+        items_from_summary = []
+        summary_file_path = server.get_summary_filename()
+        if self.driver_location and os.path.exists(self.driver_location) and os.path.exists(summary_file_path):
+            try:
+                with open(summary_file_path, 'r') as f:
+                    summary_data = json.load(f)
+                if "categories" in summary_data:
+                    for category_info in summary_data["categories"]:
+                        name = category_info.get("name", "Unknown")
+                        items_from_summary.append({
+                            "name": name,
+                            "icon_name": category_icons.get(name, default_icon),
+                            "color_hex": category_colors.get(name, default_color),
+                            "count": f"{category_info.get('count', 0)} files",
+                            "size": category_info.get("size_str", "0 B")
+                        })
+            except Exception as e:
+                print(f"Error loading or parsing summary file {summary_file_path} for refresh: {e}")
+
+        # Re-use the _create_detail_row helper method
+        if not items_from_summary:
+            self.details_list.append(self._create_left_sidebar._create_detail_row("No summary data", default_icon, default_color, "0 files", "0 B"))
+        else:
+            for item_data in items_from_summary:
+                self.details_list.append(self._create_left_sidebar._create_detail_row(item_data["name"], item_data["icon_name"], item_data["color_hex"], item_data["count"], item_data["size"]))
+
+        # 2. Refresh Device Usage (within self.usage_box)
+        self.device_name_label.set_text(self.driver_name if self.driver_name else "N/A")
+
+        new_total_size_str = "N/A"
+        new_used_size_str = "N/A"
+        new_fraction = 0.0
+        if self.driver_location and os.path.exists(self.driver_location):
+            try:
+                total_bytes, used_bytes, _ = shutil.disk_usage(self.driver_location)
+                if total_bytes > 0:
+                    new_fraction = used_bytes / total_bytes
+                new_total_size_str = server.get_user_device_size(self.driver_location, True)
+                new_used_size_str = server.get_user_device_size(self.driver_location, False)
+            except Exception as e:
+                print(f"Error getting disk usage for refresh: {e}")
+
+        self.usage_progress_bar.set_fraction(new_fraction)
+        self.combined_usage_label.set_text(f"{new_used_size_str} of {new_total_size_str}")
+        # The status icon is updated by _update_status_icon_display based on self.current_daemon_state
                 
     ##########################################################################
     # Backup
@@ -1903,14 +2034,17 @@ class BackupWindow(Adw.ApplicationWindow):
 
         destination_path = os.path.join(server.USER_HOME, rel_path)
 
+        # Set daemon state to restoring
+        self.current_daemon_state = "restoring"
+        GLib.idle_add(self._update_status_icon_display)
+
         def do_restore():
             try:
-                GLib.idle_add(self.restore_progressbar.set_visible, True)
-                GLib.idle_add(self.restore_progressbar.set_fraction, 0) # Reset progress
-
                 os.makedirs(os.path.dirname(destination_path), exist_ok=True)
                 src = file_to_restore_path # Use the passed file_to_restore_path
                 dst = destination_path
+                file_id_restore = f"restore_{dst}" # Unique ID for the transfer row
+                filename_restore = os.path.basename(dst)
                 total_size = os.path.getsize(src)
                 copied = 0
                 chunk_size = 1024 * 1024  # 1MB
@@ -1922,7 +2056,9 @@ class BackupWindow(Adw.ApplicationWindow):
                         fdst.write(chunk)
                         copied += len(chunk)
                         progress = copied / total_size if total_size > 0 else 1.0
-                        GLib.idle_add(self.restore_progressbar.set_fraction, progress)
+                        size_restore_str = server.get_item_size(src, True)
+                        eta_restore_str = "Restoring..." if progress < 1.0 else "Done"
+                        GLib.idle_add(self.update_or_create_transfer, file_id_restore, filename_restore, size_restore_str, eta_restore_str, progress)
                 print(f"Restored {src} to {dst}")
                 shutil.copystat(src, dst)
 
@@ -1936,9 +2072,7 @@ class BackupWindow(Adw.ApplicationWindow):
             except Exception as e:
                 print(f"Error restoring file: {e}")
                 if clicked_button_widget: GLib.idle_add(clicked_button_widget.set_sensitive, True)
-            finally:
-                def hide_progress(): self.restore_progressbar.set_visible(False)
-                GLib.timeout_add(1000, hide_progress) # Hide after 1 second
+            # The 'finally' block for hiding progressbar is removed as the row handles its own lifecycle.
         threading.Thread(target=do_restore, daemon=True).start()
 
     def on_main_window_close(self, *args):
@@ -2580,6 +2714,35 @@ class SettingsWindow(Adw.PreferencesWindow):
         if self.programmatic_change or self.switch_cooldown_active:
             return  # Exit the function if it's a programmatic change or cooldown active
 
+        if switch.get_active(): # Trying to enable
+            # Check for persistent critical error state by reading the log
+            log_file_path = server.get_log_file_path()
+            has_critical_in_log = False
+            if os.path.exists(log_file_path):
+                try:
+                    with open(log_file_path, 'r') as f:
+                        for line_log in f: # Scan efficiently
+                            if "[CRITICAL]" in line_log:
+                                has_critical_in_log = True
+                                break
+                except Exception as e:
+                    print(f"Could not check log for critical errors: {e}")
+
+            if has_critical_in_log:
+                self.programmatic_change = True
+                switch.set_active(False) # Prevent enabling
+                self.programmatic_change = False
+                
+                error_dialog = Adw.MessageDialog(
+                    transient_for=self.get_root(),
+                    modal=True, title="Cannot Enable Automatic Backup",
+                    body="A critical error was previously logged. Automatic backup has been disabled.\n\nPlease resolve the issue (check application logs) and restart Data Guardian to attempt re-enabling automatic backups."
+                )
+                error_dialog.add_response("ok", "OK")
+                error_dialog.connect("response", lambda d, r: d.close())
+                error_dialog.present()
+                return # Stop further processing for enabling
+
         # Check if the switch is being enabled
         if switch.get_active():
             # Disable the switch immediately and start the cooldown
@@ -2587,58 +2750,61 @@ class SettingsWindow(Adw.PreferencesWindow):
 
             # Wait for user's confirmation to proceed
             def handle_confirmation(confirmed):
-                if not confirmed:
-                    # User declined, reset the switch to its previous state
-                    self.programmatic_change = True
-                    switch.set_active(False)
-                    self.programmatic_change = False
-                    return
-
-                # User confirmed, proceed with enabling automatic backup
-                if not server.is_daemon_running():
-                    self.start_daemon()  # Only start if not running
-                
-                def create_autostart_entry():
-                    autostart_dir = os.path.expanduser("~/.config/autostart/")
-                    os.makedirs(autostart_dir, exist_ok=True)
-
-                    desktop_file_content = f"""
-                        [Desktop Entry]
-                        Type=Application
-                        Exec=flatpak run --command=python3 {server.ID} /app/share/{server.APP_NAME_CLOSE_LOWER}/src/at_boot.py
-                        X-GNOME-Autostart-enabled=true
-                        Name={server.APP_NAME}
-                        Comment[en_US]=Automatically start {server.APP_NAME}
-                        Comment=Automatically start {server.APP_NAME}
-                        """
-
-                    with open(os.path.join(autostart_dir, f"{server.APP_NAME_CLOSE_LOWER}_autostart.desktop"), 'w') as f:
-                        f.write(desktop_file_content)
-                    logging.info("Autostart entry created.")
-
-                create_autostart_entry()  # Create .desktop file for auto startup
-                server.write_backup_status(status='Monitoring')  # Update backup status
-
-                # Update the conf file
-                server.set_database_value(
-                    section='BACKUP',
-                    option='automatically_backup',
-                    value='true')
+                self._handle_auto_backup_enable_confirmation(confirmed, switch)
 
             # Show the confirmation dialog
             self.confirm_backup_device(handle_confirmation)
         else:
             # If the switch is being disabled, proceed without showing the dialog
-            self.stop_daemon()  # Stop the daemon
-            self.remove_autostart_entry()  # Optionally remove autostart entry
-            server.write_backup_status(status='Offline')  # Update backup status
+            self._handle_auto_backup_disable(switch)
 
-            # Update the conf file
-            server.set_database_value(
-                section='BACKUP',
-                option='automatically_backup',
-                value='false'
-            )
+    # Helper for enabling logic after confirmation
+    def _handle_auto_backup_enable_confirmation(self, confirmed, switch):
+        if not confirmed:
+            self.programmatic_change = True
+            switch.set_active(False)
+            self.programmatic_change = False
+            if self.switch_cooldown_active:
+                 GLib.idle_add(self.enable_switch, switch)
+            return
+
+        if not server.is_daemon_running():
+            self.start_daemon()
+        
+        self.create_autostart_entry_if_not_exists()
+        server.set_database_value('BACKUP', 'automatically_backup', 'true')
+        if self.switch_cooldown_active:
+            GLib.idle_add(self.enable_switch, switch)
+
+    # Helper for disabling logic
+    def _handle_auto_backup_disable(self, switch):
+        self.stop_daemon()
+        self.remove_autostart_entry()
+        server.set_database_value('BACKUP', 'automatically_backup', 'false')
+        if self.switch_cooldown_active:
+            GLib.idle_add(self.enable_switch, switch)
+
+    # New helper for creating autostart (to avoid code duplication)
+    def create_autostart_entry_if_not_exists(self):
+        autostart_dir = os.path.expanduser("~/.config/autostart/")
+        autostart_file_path = os.path.join(autostart_dir, f"{server.APP_NAME_CLOSE_LOWER}_autostart.desktop")
+
+        if not os.path.exists(autostart_file_path):
+            os.makedirs(autostart_dir, exist_ok=True)
+            desktop_file_content = f"""
+                [Desktop Entry]
+                Type=Application
+                Exec=flatpak run --command=python3 {server.ID} /app/share/{server.APP_NAME_CLOSE_LOWER}/src/at_boot.py
+                X-GNOME-Autostart-enabled=true
+                Name={server.APP_NAME}
+                Comment[en_US]=Automatically start {server.APP_NAME}
+                Comment=Automatically start {server.APP_NAME}
+                """
+            with open(autostart_file_path, 'w') as f:
+                f.write(desktop_file_content)
+            logging.info("Autostart entry created.")
+        else:
+            logging.info("Autostart entry already exists.")
 
     def confirm_backup_device(self, callback):
         """Show a confirmation dialog to confirm the backup device."""
@@ -2649,7 +2815,7 @@ class SettingsWindow(Adw.PreferencesWindow):
 
         # Create the Adw.MessageDialog
         dialog = Adw.MessageDialog(
-            transient_for=self,
+            transient_for=self.get_root(), # Use self.get_root() for Adw.Window
             modal=True,
             title="Enable Automatic Backup",
             body=f"Do you want to back up to this device: '{device_name}'?"
@@ -2663,9 +2829,9 @@ class SettingsWindow(Adw.PreferencesWindow):
         dialog.set_close_response("no")
 
         # Connect to the response signal
-        def on_response(dialog, response):
-            dialog.close()
-            if response == "yes":
+        def on_response(dialog_widget, response_id): # Matched signal signature
+            dialog_widget.close()
+            if response_id == "yes":
                 print(f"User confirmed backup to device: {device_name}")
                 callback(True)  # Call the callback with True
             else:
@@ -2706,21 +2872,31 @@ class SettingsWindow(Adw.PreferencesWindow):
 
             try:
                 os.kill(pid, signal.SIGTERM)  # Send termination signal
-                os.waitpid(pid, 0)  # Wait for the process to terminate
-                os.remove(server.DAEMON_PID_LOCATION)
-                print(f"Daemon with PID {pid} stopped.")
+                # os.waitpid(pid, 0)  # Wait for the process to terminate - can block UI
+                if os.path.exists(server.DAEMON_PID_LOCATION): # Check again before removing
+                    os.remove(server.DAEMON_PID_LOCATION)
+                print(f"Daemon with PID {pid} signaled to stop.")
             except OSError as e:
                 print(f"Failed to stop daemon with PID {pid}. Error: {e}")
-                if e.errno == errno.ESRCH:
+                if e.errno == errno.ESRCH: # No such process
                     print(f"Daemon with PID {pid} not found. Removing stale PID file.")
-                    os.remove(server.DAEMON_PID_LOCATION)
+                    if os.path.exists(server.DAEMON_PID_LOCATION):
+                        os.remove(server.DAEMON_PID_LOCATION)
         else:
-            print("Daemon is not running.")
+            print("Daemon is not running (no PID file).")
 
     def remove_autostart_entry(self):
-        if os.path.exists(server.autostart_file):
-            os.remove(server.autostart_file)
+        autostart_file_path = os.path.expanduser(f"~/.config/autostart/{server.APP_NAME_CLOSE_LOWER}_autostart.desktop")
+        if os.path.exists(autostart_file_path):
+            os.remove(autostart_file_path)
             logging.info("Autostart entry removed.")
+
+            # Update the conf file
+            server.set_database_value(
+                section='BACKUP',
+                option='automatically_backup',
+                value='false'
+            )
 
 
     def create_folder_row(self, folder_name):

@@ -15,7 +15,7 @@ class BackupApp(Adw.Application):
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
-        
+        print(server.LOG_FILE_PATH)
         win = BackupWindow(application=self)
         win.present()
 
