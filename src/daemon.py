@@ -1,9 +1,14 @@
 from concurrent.futures import ThreadPoolExecutor
 from has_driver_connection import has_driver_connection
 from server import *
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 
-WAIT_TIME = 1  # Minutes between backup checks
-COPY_CONCURRENCY = 4  # Max parallel copy tasks
+WAIT_TIME = 5  # Minutes between backup checks
+
+# Concurrency settings for copying files
+# Default, can be adjusted based on system resources and current load
+DEFAULT_COPY_CONCURRENCY = 2
 
 
 def compute_folder_metadata(folder_path, excluded_dirs=None, excluded_exts=None):
@@ -31,6 +36,9 @@ def compute_folder_metadata(folder_path, excluded_dirs=None, excluded_exts=None)
                 pass  # Skip unreadable files
 
     return {
+        "path": folder_path, # Store the path for which metadata was computed
+        "computed_at": time.time(), # Timestamp of when this metadata was computed
+        # Consider adding a hash of file list and their mtimes for more robust change detection
         "total_files": total_files,
         "total_size": total_size,
         "latest_mtime": latest_mtime
@@ -45,12 +53,72 @@ def send_to_ui(message: str):
     except Exception:
         pass  # UI might not be running, ignore
 
-class Daemon:
-    def __init__(self):
-        self.user_home = server.USER_HOME
+class DownloadsEventHandler(FileSystemEventHandler):
+    def __init__(self, daemon_instance):
+        super().__init__()
+        self.daemon = daemon_instance
+        # Ensure user_home is correctly referenced from the daemon instance
+        self.downloads_path = os.path.join(self.daemon.user_home, "Downloads")
 
-        self.executor = ThreadPoolExecutor(max_workers=COPY_CONCURRENCY)
-        self.copy_semaphore = asyncio.Semaphore(COPY_CONCURRENCY)
+    def on_created(self, event):
+        if event.is_directory:
+            return
+
+        src_path = event.src_path
+        # Check if the event is within the Downloads folder
+        # and not a subdirectory (recursive=False for observer)
+        if os.path.dirname(src_path) != self.downloads_path:
+            return
+
+        filename = os.path.basename(src_path)
+        if filename.endswith((".deb", ".rpm")):
+            logging.info(f"Watchdog: Detected new package in Downloads: {src_path}")
+            if hasattr(self.daemon, 'loop') and self.daemon.loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    self.daemon._handle_downloaded_package(src_path),
+                    self.daemon.loop
+                )
+            else:
+                logging.warning("Daemon event loop not available for handling downloaded package from watchdog.")
+class Daemon:
+    ############################################################################
+    # INITIALIZATION AND CONFIGURATION
+    ############################################################################
+    def __init__(self):  # NONSONAR 
+        """Initialize the daemon with necessary configurations and signal handlers."""
+        # Determine copy concurrency based on CPU cores and current load
+        try:
+            cpu_cores = os.cpu_count()
+            # Get a snapshot of CPU utilization over a short interval
+            # interval=None would be non-blocking but might give the load since last call or system boot,
+            # interval=0.1 gives a more current snapshot.
+            cpu_load = psutil.cpu_percent(interval=0.1)
+
+            HIGH_CPU_THRESHOLD = 75.0  # Percent, e.g., if CPU is over 75% busy
+            # When CPU is high, use a very conservative concurrency, e.g., 1 or 2, or a small fraction of cores
+            LOW_CONCURRENCY_ON_HIGH_LOAD = max(1, (cpu_cores // 4) if cpu_cores else 1)
+
+            if cpu_load > HIGH_CPU_THRESHOLD:
+                self.copy_concurrency = LOW_CONCURRENCY_ON_HIGH_LOAD
+                logging.info(
+                    f"High CPU load ({cpu_load}%) detected. "
+                    f"Setting COPY_CONCURRENCY to a conservative {self.copy_concurrency}."
+                )
+            else:
+                # Use between 1 and 8 (configurable max), based on cores, but not more than available cores.
+                # If cpu_cores is None, it defaults to DEFAULT_COPY_CONCURRENCY
+                self.copy_concurrency = max(1, min(cpu_cores if cpu_cores else DEFAULT_COPY_CONCURRENCY, 8))
+                logging.info(
+                    f"CPU load ({cpu_load}%) is moderate. "
+                    f"Setting COPY_CONCURRENCY to {self.copy_concurrency} based on {cpu_cores or 'default'} CPU cores."
+                )
+        except Exception as e:
+            logging.warning(
+                f"Could not determine CPU cores/load, defaulting COPY_CONCURRENCY to {DEFAULT_COPY_CONCURRENCY}. Error: {e}"
+            )
+            self.copy_concurrency = DEFAULT_COPY_CONCURRENCY
+
+        self.user_home = server.USER_HOME
 
         self.excluded_dirs = {'__pycache__', 'snap'}
         self.excluded_exts = {'.crdownload', '.part', '.tmp'}
@@ -61,10 +129,18 @@ class Daemon:
         self.update_backup_dir = server.backup_folder_name()
         self.interruped_main_file = server.get_interrupted_main_file()
 
+        self.executor = ThreadPoolExecutor(max_workers=self.copy_concurrency)
+        self.copy_semaphore = asyncio.Semaphore(self.copy_concurrency)
+
         self.backup_in_progress = False
         self.suspend_flag = False
         self.should_exit = False
+        self.had_writability_issue = False # Tracks if a writability issue was logged
+        self.downloads_observer = None # For watchdog
 
+    ############################################################################
+    # SIGNAL HANDLING
+    ############################################################################
     def signal_handler(self, signum, frame):
         if signum == signal.SIGTSTP:
             logging.info(f"Received SIGTSTP (suspend), pausing daemon...")
@@ -72,12 +148,19 @@ class Daemon:
         else:
             logging.info(f"Received termination signal {signum}, stopping daemon...")
             self.suspend_flag = True
+            if self.downloads_observer:
+                self.downloads_observer.stop()
+                # self.downloads_observer.join() # Join in cleanup or finally
+            # self.executor.shutdown(wait=False) # Consider graceful shutdown for executor
             self.should_exit = True
     
     def resume_handler(self, signum, frame):
         logging.info(f"Received resume signal {signum}, resuming operations.")
         self.suspend_flag = False
 
+    ############################################################################
+    # BACKUP LOCATION AND PERMISSIONS
+    ############################################################################
     def is_backup_location_writable(self) -> bool:
         """Checks if the base backup folder is writable."""
         base_path = server.create_base_folder()
@@ -103,6 +186,9 @@ class Daemon:
             logging.error(f"Backup location {base_path} is not writable: {e}")
             return False
 
+    ############################################################################
+    # FILE HASHING AND COMPARISON
+    ############################################################################
     def file_hash(self, path: str) -> str:
         """Compute SHA-256 hash of a file."""
         try:
@@ -182,6 +268,9 @@ class Daemon:
         logging.info(f"File '{rel_path}' is new or no existing valid backup was definitively matched. Marking for backup.")
         return True # Default to True if no existing backup is found or if errors occurred in main comparison
 
+    ############################################################################
+    # FILE COPYING (CORE BACKUP LOGIC)
+    ############################################################################
     async def copy_file(self, src: str, dst: str, rel_path: str):
         async with self.copy_semaphore:
             file_id = rel_path  # Use rel_path as a unique ID for the UI
@@ -306,6 +395,44 @@ class Daemon:
                     "error": str(e)}
                 send_to_ui(json.dumps(error_msg))
 
+    async def _backup_package_file(self, src_path: str, dest_folder: str):
+        """Backs up a package file from Downloads to the specified destination folder."""
+        filename = os.path.basename(src_path)
+        dest_path = os.path.join(dest_folder, filename)
+        try:
+            # Ensure the destination directory exists
+            await asyncio.get_event_loop().run_in_executor(
+                self.executor,
+                lambda: os.makedirs(dest_folder, exist_ok=True)
+            )
+            # Copy the file
+            await asyncio.get_event_loop().run_in_executor(
+                self.executor,
+                lambda: shutil.copy2(src_path, dest_path)  # copy2 preserves metadata
+            )
+            logging.info(f"Backed up downloaded package: {src_path} -> {dest_path}")
+        except Exception as e:
+            logging.error(f"Error backing up downloaded package {src_path} to {dest_path}: {e}")
+
+    async def _handle_downloaded_package(self, src_path: str):
+        """Handles a .deb or .rpm file detected in the Downloads folder."""
+        if not os.path.isfile(src_path): # Ensure it's a file and still exists
+            return
+
+        filename = os.path.basename(src_path)
+        dest_folder = None
+        if filename.endswith(".deb"): dest_folder = server.deb_main_folder()
+        elif filename.endswith(".rpm"): dest_folder = server.rpm_main_folder()
+
+        if dest_folder and server.DRIVER_LOCATION and self.is_backup_location_writable():
+            await self._backup_package_file(src_path, dest_folder)
+        elif not dest_folder: logging.debug(f"File {filename} is not a .deb or .rpm package. Ignoring.")
+        elif not server.DRIVER_LOCATION: logging.warning(f"Backup driver location not set. Cannot backup {filename}.")
+        elif not self.is_backup_location_writable(): logging.warning(f"Backup location not writable. Cannot backup {filename}.")
+
+    ############################################################################
+    # FOLDER METADATA HANDLING
+    ############################################################################
     def load_folder_metadata(self, top_rel_path):
         meta_path = os.path.join(self.main_backup_dir, top_rel_path, '.backup_meta.json')
         if os.path.exists(meta_path):
@@ -345,6 +472,9 @@ class Daemon:
                 return True
         return False
     
+    ############################################################################
+    # MAIN BACKUP PROCESS
+    ############################################################################
     async def scan_and_backup(self):
         tasks = []
         now = datetime.now()
@@ -454,6 +584,36 @@ class Daemon:
             logging.error(f"Could not remove interrupted_main_file {self.interruped_main_file}: {e}. "
                           "This may indicate a read-only filesystem.")
         
+        # Cleanup empty incremental folders
+        if os.path.exists(session_backup_dir): # Check if session_backup_dir was even created
+            self._cleanup_empty_incremental_folders(session_backup_dir)
+
+    ############################################################################
+    # CLEANUP OF EMPTY INCREMENTAL FOLDERS
+    ############################################################################
+    def _cleanup_empty_incremental_folders(self, session_backup_dir: str):
+        """
+        Removes the session backup directory if it's empty.
+        Also removes the parent date directory if it becomes empty as a result.
+        """
+        try:
+            if not os.listdir(session_backup_dir): # Check if HH-MM folder is empty
+                logging.info(f"Removing empty incremental session folder: {session_backup_dir}")
+                os.rmdir(session_backup_dir)
+
+                # Check and remove parent date folder if it's now empty
+                date_dir = os.path.dirname(session_backup_dir)
+                if os.path.exists(date_dir) and not os.listdir(date_dir):
+                    logging.info(f"Removing empty incremental date folder: {date_dir}")
+                    os.rmdir(date_dir)
+            # else:
+                # logging.info(f"Incremental session folder {session_backup_dir} is not empty.")
+        except OSError as e:
+            logging.error(f"Error during cleanup of empty incremental folders for {session_backup_dir}: {e}")
+
+    ############################################################################
+    # INTERRUPTION HANDLING
+    ############################################################################
     async def resume_from_interruption(self):
         if os.path.exists(self.interruped_main_file):
             logging.info("Interrupted backup session file found.")
@@ -462,8 +622,12 @@ class Daemon:
                 await self.scan_and_backup() 
             else:
                 logging.warning("Backup location not writable. Cannot resume interrupted backup at this time. Will retry later.")
-                
+
+    ############################################################################
+    # DAEMON MAIN RUN LOOP
+    ############################################################################
     async def run(self):
+        self.loop = asyncio.get_running_loop() # Store the loop for threadsafe calls
         await self.resume_from_interruption()
         shutdown_event = asyncio.Event()
 
@@ -477,6 +641,17 @@ class Daemon:
         signal.signal(signal.SIGCONT, self.resume_handler)  # Resume
 
         logging.info("Starting scan and backup...")
+
+        # Start Downloads watchdog observer
+        downloads_path = os.path.join(self.user_home, "Downloads")
+        if os.path.exists(downloads_path):
+            event_handler = DownloadsEventHandler(self)
+            self.downloads_observer = Observer()
+            self.downloads_observer.schedule(event_handler, downloads_path, recursive=False)
+            self.downloads_observer.start()
+            logging.info(f"Started watchdog for Downloads folder: {downloads_path}")
+        else:
+            logging.warning(f"Downloads folder not found: {downloads_path}. Watchdog not started.")
 
         while not self.should_exit:
             if self.suspend_flag:
@@ -525,7 +700,15 @@ class Daemon:
                 self.signal_handler(signal.SIGTERM, None) # Trigger shutdown
                 break # Exit the loop
 
-
+        # Cleanup observer
+        if self.downloads_observer and self.downloads_observer.is_alive():
+            self.downloads_observer.stop()
+            self.downloads_observer.join()
+            logging.info("Stopped watchdog for Downloads folder.")
+        self.executor.shutdown(wait=True) # Ensure executor tasks complete
+################################################################################
+# MAIN EXECUTION BLOCK
+################################################################################
 if __name__ == "__main__":
     server = SERVER()
 

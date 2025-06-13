@@ -2,7 +2,7 @@ import os
 import json
 import math
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from server import SERVER  # Assuming server.py is in the same directory or accessible
 
 server = SERVER()
@@ -74,6 +74,8 @@ def generate_summary():
 
     # --- Calculate Most Frequent Backups from Incremental Backups ---
     file_backup_counts = {}
+    recent_file_backup_counts = {} # For files backed up in the last 5 days
+    five_days_ago = datetime.now() - timedelta(days=5)
     main_backup_folder_name = os.path.basename(main_backup_path)
 
     if os.path.exists(backup_root):
@@ -84,9 +86,11 @@ def generate_summary():
             if date_folder_name == main_backup_folder_name or not os.path.isdir(date_folder_path):
                 continue
 
-            # Validate date folder format (optional but good practice)
+            is_recent_date = False
             try:
-                datetime.strptime(date_folder_name, "%d-%m-%Y")
+                backup_date = datetime.strptime(date_folder_name, "%d-%m-%Y")
+                if backup_date >= five_days_ago:
+                    is_recent_date = True
             except ValueError:
                 logging.warning(f"Skipping invalid date folder format: {date_folder_name}")
                 continue
@@ -107,9 +111,13 @@ def generate_summary():
                         original_rel_path = os.path.join(rel_root_from_time_folder, filename)
                         original_rel_path = original_rel_path.replace("\\", "/") # Normalize path separators
                         file_backup_counts[original_rel_path] = file_backup_counts.get(original_rel_path, 0) + 1
+                        if is_recent_date:
+                            recent_file_backup_counts[original_rel_path] = recent_file_backup_counts.get(original_rel_path, 0) + 1
 
     # Sort files by backup count in descending order and select top N
     sorted_files = sorted(file_backup_counts.items(), key=lambda item: item[1], reverse=True)
+    sorted_recent_files = sorted(recent_file_backup_counts.items(), key=lambda item: item[1], reverse=True)
+
     summary_data = []
     for cat_name, data in category_stats.items():
         summary_data.append(
@@ -120,11 +128,13 @@ def generate_summary():
 
     top_n = 5
     most_frequent_backups = [{"path": path, "count": count} for path, count in sorted_files[:top_n]]
+    most_frequent_recent_backups = [{"path": path, "count": count} for path, count in sorted_recent_files[:top_n]]
 
     # Prepare final summary data structure
     summary_output_data = {
         "categories": summary_data,
-        "most_frequent_backups": most_frequent_backups
+        "most_frequent_backups": most_frequent_backups,
+        "most_frequent_recent_backups": most_frequent_recent_backups # Add new list
     }
     with open(summary_output_path, 'w') as f:
         json.dump(summary_output_data, f, indent=4)

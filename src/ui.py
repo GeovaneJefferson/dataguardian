@@ -145,10 +145,13 @@ class BackupWindow(Adw.ApplicationWindow):
         self.selected_file_path: bool = None
         self.documents_path = os.path.expanduser(server.main_backup_folder())
         self.location_buttons: list = []
-        self.files: list = []
+        # For search
+        self.files: list = [] # Holds dicts of scanned files from .main_backup
+        self.file_names_lower: list = [] # Lowercase basenames for searching
+        self.file_search_display_paths_lower: list = [] # Lowercase relative paths for searching
         self.last_query: str = ""
-        self.files_loaded: bool = False
-        self.pending_search_query: bool = None
+        self.files_loaded: bool = False # Flag indicating if initial scan is complete
+        self.pending_search_query: str = None # Stores search query if files aren't loaded yet
         self.scan_files_folder_threaded()
         self.thumbnail_cache = {} # For in-memory thumbnail caching
         self.ignored_folders = []
@@ -181,6 +184,7 @@ class BackupWindow(Adw.ApplicationWindow):
         self._create_header_bar()
         self._create_left_sidebar()
         self._create_main_content()
+        self._populate_suggested_files() # Add this call
         self._set_initial_daemon_state_and_update_icon()
     
         self.populate_latest_backups()  # At startup populate with latest backups results
@@ -255,10 +259,25 @@ class BackupWindow(Adw.ApplicationWindow):
         # filter_box.append(date_combo)
         # center_box.append(filter_box)
 
+        # --- Suggested Files Section ---
+        suggested_files_title_label = Gtk.Label(xalign=0)
+        suggested_files_title_label.set_text("Suggested Files")
+        suggested_files_title_label.add_css_class("title-3")
+        suggested_files_title_label.set_margin_top(12)
+        suggested_files_title_label.set_margin_bottom(6)
+        center_box.append(suggested_files_title_label)
+
+        self.suggested_files_flowbox = Gtk.FlowBox()
+        self.suggested_files_flowbox.set_valign(Gtk.Align.START)
+        self.suggested_files_flowbox.set_max_children_per_line(5) # Adjust as needed
+        self.suggested_files_flowbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.suggested_files_flowbox.set_margin_bottom(12) # Space before next section
+        center_box.append(self.suggested_files_flowbox)
+
         # --- Latest Backups/Search Resulst Section ---
         self.top_center_label = Gtk.Label(xalign=0)
-        self.top_center_label.add_css_class("title-4") # Ensure .title-3 is styled in your CSS
-        self.top_center_label.set_margin_top(12) # Space will be from previous section's bottom margin
+        self.top_center_label.add_css_class("title-3") # Ensure .title-3 is styled in your CSS
+        self.top_center_label.set_margin_top(0) # Space will be from previous section's bottom margin
         self.top_center_label.set_margin_bottom(12) # Space between title and listbox
         center_box.append(self.top_center_label)
 
@@ -323,7 +342,7 @@ class BackupWindow(Adw.ApplicationWindow):
         if not hasattr(self, '_add_dynamic_css_rule'):
             self._add_dynamic_css_rule = self._default_add_dynamic_css_rule_impl
         
-        left_sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        left_sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         left_sidebar.set_size_request(240, -1) # Slightly wider for device info
         left_sidebar.add_css_class("left-sidebar")
         left_sidebar.set_margin_top(12)
@@ -336,7 +355,7 @@ class BackupWindow(Adw.ApplicationWindow):
 
         # Search Entry - Moved to Left Sidebar
         self.search_entry = Gtk.SearchEntry()
-        self.search_entry.set_placeholder_text("Search file to restore...")
+        self.search_entry.set_placeholder_text("Search e.g: text.txt or Documents/text.txt")
         self.search_entry.set_hexpand(True) # Allow it to take available horizontal space in sidebar
         self.search_entry.set_sensitive(self.has_connection)
         self.search_entry.connect("search-changed", self.on_search_changed)
@@ -345,6 +364,16 @@ class BackupWindow(Adw.ApplicationWindow):
         self.search_entry.set_margin_end(0)   # Add some space on the right side
         self.search_entry.set_margin_bottom(0) # Add some space below the search bar
         left_sidebar.append(self.search_entry)
+
+        # Revealer for Scan Status
+        self.scan_status_revealer = Gtk.Revealer()
+        self.scan_status_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        self.scan_status_revealer.set_transition_duration(300)
+        # Revealer for Transfer Title
+        self.transfer_title_revealer = Gtk.Revealer()
+        self.transfer_title_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        self.transfer_title_revealer.set_transition_duration(300)
+
 
         # Initialize attributes for scanning status and transfer list
         self.current_scan_status_label = Gtk.Label(label="Scanning...")
@@ -356,6 +385,8 @@ class BackupWindow(Adw.ApplicationWindow):
         self.current_scan_status_card = Adw.Clamp(child=self.current_scan_status_label) # Use Adw.Clamp or Gtk.Frame
         self.current_scan_status_card.set_hexpand(False)
         self.current_scan_status_card.set_maximum_size(200) # Adjust this value as needed
+        self.current_scan_status_card.set_visible(True) # Card is always visible, revealer controls it
+        self.scan_status_revealer.set_child(self.current_scan_status_card)
         self.current_scan_status_card.set_css_classes(["card"]) # Optional: for styling
 
         self.transfer_section_title_label = Gtk.Label(label="Active Transfers")
@@ -369,16 +400,22 @@ class BackupWindow(Adw.ApplicationWindow):
         self.transfer_listbox.set_margin_end(0)
         self.transfer_listbox.set_hexpand(False)
 
+        # Revealer for Transfer List
+        self.transfer_list_revealer = Gtk.Revealer()
+        self.transfer_list_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        self.transfer_list_revealer.set_transition_duration(300)
+        self.transfer_list_revealer.set_vexpand(True) # Let the revealer handle vertical expansion
+
         self.transfer_scrolled_window = Gtk.ScrolledWindow(child=self.transfer_listbox)
         self.transfer_scrolled_window.set_hexpand(False) # Prevent it from taking all horizontal space
-        self.transfer_scrolled_window.set_vexpand(True)
+        self.transfer_scrolled_window.set_vexpand(False) # Child of revealer, so revealer handles expansion
         self.transfer_scrolled_window.set_margin_top(0) # No top margin, space will be from the header
+        self.transfer_scrolled_window.set_visible(True) # Scrolled window is always visible, revealer controls it
         self.transfer_scrolled_window.set_margin_bottom(0)
         self.transfer_scrolled_window.set_margin_start(0)
         self.transfer_scrolled_window.set_margin_end(0)
 
         self.current_scan_status_card.set_margin_bottom(0)
-        self.current_scan_status_card.set_visible(False) # Initially hidden
 
         # Transfer Section Title (initialized in __init__)
         self.transfer_section_title_label.add_css_class("title-4")
@@ -389,15 +426,16 @@ class BackupWindow(Adw.ApplicationWindow):
         self.transfer_section_title_label.set_margin_bottom(0)
         self.transfer_section_title_label.set_margin_start(0) # Align with the left sidebar
         self.transfer_section_title_label.set_margin_end(0)
-        self.transfer_section_title_label.set_visible(False) # Initially hidden, shown by _update_left_panel_visibility
-        left_sidebar.append(self.transfer_section_title_label)
+        self.transfer_section_title_label.set_visible(True) # Label is always visible, revealer controls it
+        self.transfer_title_revealer.set_child(self.transfer_section_title_label)
+        left_sidebar.append(self.transfer_title_revealer)
 
         # Transfer Scrolled Window (initialized in __init__)
         self.transfer_scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         self.transfer_scrolled_window.set_min_content_height(200) # Example height
         self.transfer_scrolled_window.set_hexpand(False)
-        self.transfer_scrolled_window.set_visible(False) # Initially hidden
-        left_sidebar.append(self.transfer_scrolled_window)
+        self.transfer_list_revealer.set_child(self.transfer_scrolled_window)
+        left_sidebar.append(self.transfer_list_revealer)
 
         # Overall Usage
         self.usage_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6) # Main container for this section
@@ -604,7 +642,7 @@ class BackupWindow(Adw.ApplicationWindow):
 
         left_sidebar.append(spacer)
         left_sidebar.append(self.details_list)
-        left_sidebar.append(self.current_scan_status_card)
+        left_sidebar.append(self.scan_status_revealer) # Add revealer instead of card directly
         left_sidebar.append(self.usage_box)
 
         self.folder_scan_status_box = left_sidebar # Keep reference if needed elsewhere
@@ -671,16 +709,10 @@ class BackupWindow(Adw.ApplicationWindow):
     ##########################################################################
     def _update_left_panel_visibility(self):
         # Check if folder scanning is active or has items
-        # The visibility of current_scan_status_card is handled directly in update_scanning_folder_display
-
         has_file_transfers = bool(self.transfer_listbox.get_first_child())
 
-        # The main panel (self.folder_scan_status_box) is always visible.
-        # We only toggle visibility of its internal sections.
-        # The current_scan_status_card visibility is managed by update_scanning_folder_display
-
-        self.transfer_section_title_label.set_visible(has_file_transfers)
-        self.transfer_scrolled_window.set_visible(has_file_transfers)
+        self.transfer_title_revealer.set_reveal_child(has_file_transfers)
+        self.transfer_list_revealer.set_reveal_child(has_file_transfers)
 
     ##########################################################################
     # BACKUP
@@ -755,7 +787,7 @@ class BackupWindow(Adw.ApplicationWindow):
             self.selected_file_path = None
 
     def populate_latest_backups(self):
-        self.top_center_label.set_text("Latest Backups")
+        self.top_center_label.set_text("Latest Backups Files")
 
         # Show latest backup files on startup
         latest_files = self.get_latest_backup_files()
@@ -850,11 +882,11 @@ class BackupWindow(Adw.ApplicationWindow):
             parts = folder_path_from_daemon.split(os.sep)
             top_level_folder_name = parts[0] if parts else folder_path_from_daemon
             self.current_scan_status_label.set_text(f"Scanning: {top_level_folder_name}")
-            self.current_scan_status_card.set_visible(True)
+            self.scan_status_revealer.set_reveal_child(True)
             self.currently_scanning_top_level_folder_name = top_level_folder_name
         else:
-            self.current_scan_status_card.set_visible(False)
             self.currently_scanning_top_level_folder_name = None
+            self.scan_status_revealer.set_reveal_child(False)
         
         self._update_left_panel_visibility()
 
@@ -867,22 +899,26 @@ class BackupWindow(Adw.ApplicationWindow):
         but for the current request, it does nothing.
         """
         if not self.has_connection:
-            # self.current_scan_status_label.set_text("No connection to backup device.")
-            # self.current_scan_status_card.set_visible(True) # Or false, depending on desired UX
+            # self.scan_status_revealer.set_reveal_child(False) # Or true with a message
             return
         # If no specific folder is scanning yet, the card remains hidden by default.
         self._update_left_panel_visibility()
     
     def update_or_create_transfer(self, file_id, filename, size, eta, progress):
         if file_id not in self.transfer_rows:
-            # Create the content widget (your BackupProgressRow)
             content_widget = BackupProgressRow(file_id, filename, size, eta)
-            # Create a ListBoxRow and add the content widget to it
+            
+            revealer = Gtk.Revealer()
+            revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_UP)
+            revealer.set_transition_duration(250)
+            revealer.set_child(content_widget)
+            
             listbox_row = Gtk.ListBoxRow()
-            listbox_row.set_child(content_widget)
+            listbox_row.set_child(revealer) # Add revealer to row
             
             self.transfer_rows[file_id] = listbox_row # Store the Gtk.ListBoxRow
             self.transfer_listbox.append(listbox_row) # Add the Gtk.ListBoxRow
+            revealer.set_reveal_child(True) # Animate in
 
         # Retrieve the Gtk.ListBoxRow
         listbox_row_to_update = self.transfer_rows.get(file_id)
@@ -891,20 +927,32 @@ class BackupWindow(Adw.ApplicationWindow):
             # in a previous call, but a new update message arrives.
             return
 
-        # Get your content_widget (BackupProgressRow) from the ListBoxRow
-        content_widget_to_update = listbox_row_to_update.get_child()
-        if isinstance(content_widget_to_update, BackupProgressRow): # Type check for safety
-            content_widget_to_update.update(size, eta, progress)
+        # Get revealer and then the content_widget (BackupProgressRow)
+        revealer_to_update = listbox_row_to_update.get_child()
+        if isinstance(revealer_to_update, Gtk.Revealer):
+            content_widget_to_update = revealer_to_update.get_child()
+            if isinstance(content_widget_to_update, BackupProgressRow): # Type check for safety
+                content_widget_to_update.update(size, eta, progress)
  
         if progress >= 1.0: # If this item just completed
-            # Remove immediately
-            if listbox_row_to_update and listbox_row_to_update.get_parent() == self.transfer_listbox:
-                self.transfer_listbox.remove(listbox_row_to_update)
-            if file_id in self.transfer_rows:
-                del self.transfer_rows[file_id]
+            if isinstance(revealer_to_update, Gtk.Revealer):
+                revealer_to_update.set_reveal_child(False)
+                duration = revealer_to_update.get_transition_duration()
+                GLib.timeout_add(duration, self._remove_transfer_row_after_animation, listbox_row_to_update, file_id)
+
         self._update_left_panel_visibility()
 
         if progress >= 1.0 and not self.transfer_rows: # If this was the last transfer
+            # Check if there are any pending removals due to animation
+            pending_removal = False
+            for row_id, lbox_row in self.transfer_rows.items():
+                revealer = lbox_row.get_child()
+                if isinstance(revealer, Gtk.Revealer) and revealer.get_reveal_child():
+                    # This means a row is still visible or animating in, so not all transfers are "done" from UI perspective
+                    pending_removal = True
+                    break
+            if pending_removal: return # Don't change state yet
+
             new_final_state = "idle"
             if os.path.exists(server.get_interrupted_main_file()):
                 new_final_state = "interrupted"
@@ -913,6 +961,14 @@ class BackupWindow(Adw.ApplicationWindow):
                 GLib.idle_add(self._update_status_icon_display) # Update icon
                 GLib.idle_add(self.update_scanning_folder_display, None) # Also hide scanning card
 
+    def _remove_transfer_row_after_animation(self, row, file_id):
+        if row and row.get_parent() == self.transfer_listbox:
+            self.transfer_listbox.remove(row)
+        if file_id in self.transfer_rows:
+            del self.transfer_rows[file_id]
+        # Check if this was the last one for real now
+        self._update_left_panel_visibility() # Update visibility based on remaining items
+        return GLib.SOURCE_REMOVE
 
     def _refresh_left_sidebar_summary_and_usage(self):
         """Refreshes the backup summary details and device usage in the left sidebar."""
@@ -980,6 +1036,155 @@ class BackupWindow(Adw.ApplicationWindow):
         self.combined_usage_label.set_text(f"{new_used_size_str} of {new_total_size_str}")
         # The status icon is updated by _update_status_icon_display based on self.current_daemon_state
                 
+    ##########################################################################
+    # SUGGESTED FILES
+    ##########################################################################
+    def _populate_suggested_files(self):
+        # Clear previous suggestions from the flowbox
+        child = self.suggested_files_flowbox.get_child_at_index(0)
+        while child:
+            self.suggested_files_flowbox.remove(child)
+            child = self.suggested_files_flowbox.get_child_at_index(0)
+
+        summary_file_path = server.get_summary_filename()
+        added_basenames = set()
+        suggested_items_to_display = [] # Store dicts: {"basename": str, "thumbnail_path": str, "original_path": str}
+        MAX_SUGGESTIONS_PER_SOURCE = 5
+
+        # 1. Populate from "most_frequent_backups" (if connection and summary exist)
+        # Order of preference for suggestions:
+        # a) Most frequent in last 5 days
+        # b) Overall most frequent
+        # c) System recent files
+
+        if self.has_connection and os.path.exists(summary_file_path):
+            try:
+                with open(summary_file_path, 'r') as f:
+                    summary_data = json.load(f)
+
+                # a) Most frequent in last 5 days
+                most_frequent_recent = summary_data.get("most_frequent_recent_backups", [])
+                for item in most_frequent_recent[:MAX_SUGGESTIONS_PER_SOURCE]:
+                    rel_path = item.get("path")
+                    if not rel_path:
+                        continue
+                    basename = os.path.basename(rel_path)
+                    if basename not in added_basenames:
+                        thumbnail_path = os.path.join(server.main_backup_folder(), rel_path)
+                        original_path = os.path.join(server.USER_HOME, rel_path)
+                        suggested_items_to_display.append({"basename": basename, "thumbnail_path": thumbnail_path, "original_path": original_path, "source": "freq_recent"})
+                        added_basenames.add(basename)
+                # b) Overall most frequent (if still need more suggestions)
+                most_frequent_overall = summary_data.get("most_frequent_backups", [])
+                overall_freq_added_count = 0
+                for item in most_frequent_overall:
+                    if len(suggested_items_to_display) >= MAX_SUGGESTIONS_PER_SOURCE * 2: break # Overall limit
+                    if overall_freq_added_count >= MAX_SUGGESTIONS_PER_SOURCE: break
+
+                    rel_path = item.get("path")
+                    if not rel_path:
+                        continue
+                    basename = os.path.basename(rel_path)
+                    if basename not in added_basenames:
+                        thumbnail_path = os.path.join(server.main_backup_folder(), rel_path)
+                        original_path = os.path.join(server.USER_HOME, rel_path) # Path in user's system
+                        suggested_items_to_display.append({
+                            "basename": basename,
+                            "thumbnail_path": thumbnail_path,
+                            "original_path": original_path,
+                            "source": "freq_overall"
+                        })
+                        added_basenames.add(basename)
+                        overall_freq_added_count +=1
+            except Exception as e:
+                print(f"Error loading or parsing summary file {summary_file_path}: {e}")
+
+        # c) Populate from System Recent Files (if still need more suggestions)
+        try:
+            recent_manager = Gtk.RecentManager.get_default()
+            recent_gtk_items = recent_manager.get_items()
+            if recent_gtk_items:
+                # Sort by most recently used (get_modified_for_display might be better than get_visited)
+                # Gtk.RecentInfo.get_modified_for_display() returns a GLib.DateTime
+                # We need to convert it to a comparable value, e.g., Unix timestamp
+                def get_sort_key(info):
+                    dt = info.get_modified_for_display()
+                    return dt.to_unix() if dt else 0
+
+                recent_gtk_items.sort(key=get_sort_key, reverse=True)
+
+                system_recent_added_count = 0
+                for info in recent_gtk_items:
+                    if len(suggested_items_to_display) >= MAX_SUGGESTIONS_PER_SOURCE * 2: # Overall limit
+                        break
+                    if system_recent_added_count >= MAX_SUGGESTIONS_PER_SOURCE:
+                        break # Limit from this source
+
+                    uri = info.get_uri()
+                    if uri and uri.startswith("file://"):
+                        original_path = GLib.uri_unescape_string(uri[7:], None)
+                        if os.path.isfile(original_path) and original_path.startswith(server.USER_HOME):
+                            basename = os.path.basename(original_path)
+                            if basename not in added_basenames:
+                                suggested_items_to_display.append({
+                                    "basename": basename,
+                                    "thumbnail_path": original_path, # Thumbnail from the original file
+                                    "original_path": original_path,
+                                    "source": "recent" # Mark source
+                                })
+                                added_basenames.add(basename)
+                                system_recent_added_count +=1
+        except Exception as e:
+            print(f"Error fetching system recent files: {e}")
+
+        # 3. Populate FlowBox
+        if not suggested_items_to_display:
+            self.suggested_files_flowbox.set_visible(False)
+            return
+
+        self.suggested_files_flowbox.set_visible(True)
+
+        for item_data in suggested_items_to_display:
+            basename = item_data["basename"]
+            thumbnail_path = item_data["thumbnail_path"]
+            original_path = item_data["original_path"]
+
+            button_content = Adw.ButtonContent()
+            pixbuf = self._generate_thumbnail_pixbuf(thumbnail_path, size_px=48)
+            if pixbuf:
+                button_content.set_icon_name(None) # Clear if set
+                button_content.set_paintable(Gdk.Texture.new_for_pixbuf(pixbuf))
+            else:
+                button_content.set_icon_name("text-x-generic-symbolic") # Fallback icon
+
+            button_content.set_label(basename)
+
+            btn = Gtk.Button(child=button_content, has_frame=True)
+            btn.add_css_class("suggested-file-card") # For custom styling
+            # Pass basename for search and original_path for potential future context
+            btn.connect("clicked", self.on_suggested_file_clicked, basename, original_path)
+            self.suggested_files_flowbox.append(btn)
+
+    def on_suggested_file_clicked(self, button, basename_to_search, original_file_path):
+        # original_file_path is the absolute path to the file on the user's system.
+        # It can be used for context, e.g., if you wanted to add an "Open Original" option.
+        # print(f"Suggested file clicked: {basename_to_search} (Original: {original_file_path})")
+
+        # Determine the search term to use.
+        # If the original_file_path is within the user's home directory,
+        # use the path relative to home. Otherwise, fall back to the basename.
+        if original_file_path and original_file_path.startswith(server.USER_HOME):
+            search_term = os.path.relpath(original_file_path, server.USER_HOME)
+        else:
+            search_term = basename_to_search # Fallback to basename if path is unexpected
+
+        self.search_entry.set_text(search_term)
+
+        # Trigger the search logic directly.
+        # The on_search_changed method has a timer, so calling perform_search directly is better here.
+        query = search_term.strip().lower()
+        threading.Thread(target=self.perform_search, args=(query,), daemon=True).start()
+
     ##########################################################################
     # Backup
     ##########################################################################
@@ -1320,22 +1525,32 @@ class BackupWindow(Adw.ApplicationWindow):
     ##########################################################################
     def scan_files_folder_threaded(self):
         def scan():
-            self.files = self.scan_files_folder()
-            self.file_names_lower = [f["name"].lower() for f in self.files]
-            self.files_loaded = True
+            try:
+                self.files = self.scan_files_folder()
+                # These attributes must be set *before* files_loaded is True
+                self.file_names_lower = [f["name"].lower() for f in self.files]
+                self.file_search_display_paths_lower = [f["search_display_path"].lower().replace(os.sep, "/") for f in self.files]
+                self.files_loaded = True  # Mark files as loaded only after successful initialization
+            except Exception as e:
+                print(f"Error during background file scanning: {e}")
+                # Ensure a clean state on error
+                self.files = []
+                self.file_names_lower = []
+                self.file_search_display_paths_lower = []
+                self.files_loaded = False # Crucial: mark as not loaded
+                return # Stop further processing in this thread if scanning failed
+
+            # If scan was successful and files are loaded, process any pending/last search
             if self.pending_search_query is not None:
-                # Run the pending search
                 GLib.idle_add(self.perform_search, self.pending_search_query)
                 self.pending_search_query = None
             elif self.last_query:
                 GLib.idle_add(self.perform_search, self.last_query)
-            # else:
-            #     GLib.idle_add(
-            #         self.populate_results, 
-            #         sorted(self.files, key=lambda x: x["date"], reverse=True)[:self.page_size]
-            #     )
-        threading.Thread(target=scan, daemon=True).start()
+            # Optional: If no pending/last query, populate with some default (e.g., all files sorted by date)
+            # else: # No search query, show all files (or latest)
+            #    GLib.idle_add(self.populate_results, sorted(self.files, key=lambda x: x["date"], reverse=True)[:self.page_size])
 
+        threading.Thread(target=scan, daemon=True).start()
     def scan_files_folder(self):
         """Scan files and return a list of file dictionaries."""
         if not os.path.exists(self.documents_path):
@@ -1343,6 +1558,9 @@ class BackupWindow(Adw.ApplicationWindow):
             return []
 
         file_list = []
+        # base_for_rel_path is the folder *containing* .main_backup, i.e., server.backup_folder_name()
+        base_for_search_display_path = os.path.dirname(self.documents_path) 
+
         for root, dirs, files in os.walk(self.documents_path):
             # Optionally, add logic here to exclude hidden directories or specific directories
             # dirs[:] = [d for d in dirs if not d.startswith('.')] # Example: exclude hidden dirs
@@ -1351,7 +1569,8 @@ class BackupWindow(Adw.ApplicationWindow):
                 # if file_name.startswith('.'): continue # Example: exclude hidden files
                 file_path = os.path.join(root, file_name)
                 file_date = os.path.getmtime(file_path)
-                file_list.append({"name": file_name, "path": file_path, "date": file_date})
+                search_display_path = os.path.relpath(file_path, base_for_search_display_path)
+                file_list.append({"name": file_name, "path": file_path, "date": file_date, "search_display_path": search_display_path})
         return file_list
 
     def on_search_changed(self, entry):
@@ -1377,9 +1596,25 @@ class BackupWindow(Adw.ApplicationWindow):
 
     def perform_search(self, query):
         """Perform the search and update the results."""
+        if not self.files_loaded:
+            # If files are not loaded yet, queue the search and return.
+            # The scan_files_folder_threaded method will pick up pending_search_query.
+            self.pending_search_query = query
+            # print(f"Search for '{query}' deferred as files are not loaded yet.")
+            return
+
         try:
             results = self.search_backup_sources(query)
-            self.top_center_label.set_text("Backups")
+            self.top_center_label.set_text("Backups Files")
+        except AttributeError as e:
+            # This is a fallback. Ideally, the `if not self.files_loaded` check prevents this.
+            # If this happens, it indicates a deeper issue with state management during file loading.
+            print(f"Critical Search Error (AttributeError): {e}. File attributes might be missing.")
+            print("Attempting to re-initialize file scan and deferring search.")
+            self.files_loaded = False  # Mark as not loaded to ensure re-check/re-scan
+            self.pending_search_query = query # Re-queue the current search
+            self.scan_files_folder_threaded() # Re-trigger the scan
+            results = []
         except Exception as e:
             print(f"Error during search: {e}")
             results = []
@@ -1389,24 +1624,12 @@ class BackupWindow(Adw.ApplicationWindow):
         query = query.strip().lower()
         if not query:
             return []
-        
-        # Before
-        # starts_with = [f for f in self.files if f["name"].lower().startswith(query)]
-        # contains = [f for f in self.files if query in f["name"].lower() and not f["name"].lower().startswith(query)]
-
-        # # Combine and sort by date descending
-        # results = starts_with + contains
-        # return results
-    
-        # After
-        # results = [f for f in self.files if query in f["name"].lower()]
-        # results.sort(key=lambda x: x["date"], reverse=True)
-        # return results[:self.page_size]
 
         # With index
         matches = []
         for idx, name in enumerate(self.file_names_lower):
-            if query in name:
+            # Check against basename or the searchable display path
+            if query in name or query in self.file_search_display_paths_lower[idx]:
                 matches.append(self.files[idx])
         #matches.sort(key=lambda x: x["date"], reverse=True)
         return matches[:self.page_size]
@@ -1471,7 +1694,7 @@ class BackupWindow(Adw.ApplicationWindow):
         # Clear existing results from the listbox
         while True:
             first_child_row = self.listbox.get_first_child() # This returns a Gtk.ListBoxRow
-            if not first_child_row:
+            if not first_child_row: # No fade out for simplicity, instant clear
                 break
             self.listbox.remove(first_child_row)
  
@@ -1605,16 +1828,23 @@ class BackupWindow(Adw.ApplicationWindow):
             restore_button_row.connect("clicked", self.on_restore_button_clicked_from_row) # Assuming this method exists
             restore_button_row.set_hexpand(False) # Ensure it doesn't expand
             grid.attach(restore_button_row, 6, 0, 1, 1) # Col 6: Restore Button
+            
+            # Wrap grid in a revealer for fade-in animation
+            row_revealer = Gtk.Revealer()
+            row_revealer.set_transition_type(Gtk.RevealerTransitionType.CROSSFADE)
+            row_revealer.set_transition_duration(250) # milliseconds
+            row_revealer.set_child(grid)
 
             listbox_row = Gtk.ListBoxRow()
             listbox_row.set_margin_top(6) # No top margin, space will be from the header
             listbox_row.set_margin_bottom(3)
             listbox_row.set_margin_start(12)
             listbox_row.set_margin_end(12)
-            listbox_row.set_child(grid)
+            listbox_row.set_child(row_revealer) # Add revealer to row
             listbox_row.add_css_class("file-list-row-card") # Apply card-like styling
             listbox_row.device_path = file_info["path"]
             self.listbox.append(listbox_row)
+            row_revealer.set_reveal_child(True) # Trigger animation
     
     # Open location button
     # def on_open_location_clicked(self, button):
@@ -2631,7 +2861,7 @@ class SettingsWindow(Adw.PreferencesWindow):
         folders_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         folders_header.set_halign(Gtk.Align.CENTER)
 
-        add_folder_button = Gtk.Button(icon_name="list-add", halign=Gtk.Align.CENTER)
+        add_folder_button = Gtk.Button(icon_name="list-add-symbolic", halign=Gtk.Align.CENTER)
         add_folder_button.add_css_class("flat")
         add_folder_button.connect("clicked", self.on_add_folder_clicked)
         folders_header.append(add_folder_button)
@@ -2902,7 +3132,7 @@ class SettingsWindow(Adw.PreferencesWindow):
     def create_folder_row(self, folder_name):
         """Create a row for folders with a trash icon."""
         row = Adw.ActionRow(title=folder_name)
-        trash_button = Gtk.Button(icon_name="user-trash", valign=Gtk.Align.CENTER)
+        trash_button = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER)
         trash_button.add_css_class("flat")
         trash_button.connect("clicked", self.on_remove_folder_clicked, row, folder_name)
         row.add_suffix(trash_button)
