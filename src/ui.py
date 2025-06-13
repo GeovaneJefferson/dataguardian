@@ -1111,44 +1111,6 @@ class BackupWindow(Adw.ApplicationWindow):
             except Exception as e:
                 print(f"Error loading or parsing summary file {summary_file_path}: {e}")
 
-        # c) Populate from System Recent Files (if still need more suggestions)
-        try:
-            recent_manager = Gtk.RecentManager.get_default()
-            recent_gtk_items = recent_manager.get_items()
-            if recent_gtk_items:
-                # Sort by most recently used (get_modified_for_display might be better than get_visited)
-                # Gtk.RecentInfo.get_modified_for_display() returns a GLib.DateTime
-                # We need to convert it to a comparable value, e.g., Unix timestamp
-                def get_sort_key(info):
-                    dt = info.get_modified_for_display()
-                    return dt.to_unix() if dt else 0
-
-                recent_gtk_items.sort(key=get_sort_key, reverse=True)
-
-                system_recent_added_count = 0
-                for info in recent_gtk_items:
-                    if len(suggested_items_to_display) >= MAX_SUGGESTIONS_PER_SOURCE * 2: # Overall limit
-                        break
-                    if system_recent_added_count >= MAX_SUGGESTIONS_PER_SOURCE:
-                        break # Limit from this source
-
-                    uri = info.get_uri()
-                    if uri and uri.startswith("file://"):
-                        original_path = GLib.uri_unescape_string(uri[7:], None)
-                        if os.path.isfile(original_path) and original_path.startswith(server.USER_HOME):
-                            basename = os.path.basename(original_path)
-                            if basename not in added_basenames:
-                                suggested_items_to_display.append({
-                                    "basename": basename,
-                                    "thumbnail_path": original_path, # Thumbnail from the original file
-                                    "original_path": original_path,
-                                    "source": "recent" # Mark source
-                                })
-                                added_basenames.add(basename)
-                                system_recent_added_count +=1
-        except Exception as e:
-            print(f"Error fetching system recent files: {e}")
-
         # 3. Populate FlowBox
         if not suggested_items_to_display:
             self.suggested_files_flowbox.set_visible(False)
@@ -3015,16 +2977,12 @@ class SettingsWindow(Adw.PreferencesWindow):
         
         self.create_autostart_entry_if_not_exists()
         server.set_database_value('BACKUP', 'automatically_backup', 'true')
-        if self.switch_cooldown_active:
-            GLib.idle_add(self.enable_switch, switch)
 
     # Helper for disabling logic
     def _handle_auto_backup_disable(self, switch):
         self.stop_daemon()
         self.remove_autostart_entry()
         server.set_database_value('BACKUP', 'automatically_backup', 'false')
-        if self.switch_cooldown_active:
-            GLib.idle_add(self.enable_switch, switch)
 
     # New helper for creating autostart (to avoid code duplication)
     def create_autostart_entry_if_not_exists(self):
@@ -3089,22 +3047,43 @@ class SettingsWindow(Adw.PreferencesWindow):
         """Start the daemon and store its PID, ensuring only one instance runs."""
         try:
             # Start a new daemon process
+            daemon_cmd = ['python3', server.DAEMON_PY_LOCATION]
+            logging.info(f"UI: Attempting to start daemon with command: {' '.join(daemon_cmd)}")
+            print(f"UI: Attempting to start daemon with command: {' '.join(daemon_cmd)}")
+
             process = sub.Popen(
-                ['python3', server.DAEMON_PY_LOCATION],
+                daemon_cmd,
                 start_new_session=True,
                 close_fds=True,
-                stdout=sub.DEVNULL,
-                stderr=sub.DEVNULL
+                stdout=sub.PIPE,  # Capture standard output
+                stderr=sub.PIPE   # Capture standard error
             )
+
+            # Get the output and errors (if any)
+            # You can set a timeout to prevent blocking indefinitely if the daemon hangs
+            stdout, stderr = process.communicate(timeout=5) # Timeout in seconds
 
             # Store the new PID in the file
             with open(server.DAEMON_PID_LOCATION, 'w') as f:
                 f.write(str(process.pid))
-            print(f"Daemon started with PID {process.pid}.")
-            logging.info(f"Daemon started with PID {process.pid}.")
+            logging.info(f"UI: Daemon process launched with PID {process.pid}.")
+            if stdout:
+                logging.info(f"UI: Daemon stdout:\n{stdout.decode(errors='replace')}")
+            if stderr:
+                logging.error(f"UI: Daemon stderr:\n{stderr.decode(errors='replace')}")
         except Exception as e:
-            print(f"Failed to start daemon: {e}")
-            logging.error(f"Failed to start daemon: {e}")
+            logging.error(f"UI: Timeout expired while starting daemon or getting its initial output. PID: {process.pid if process else 'N/A'}")
+            if process:
+                process.kill() # Ensure the process is killed if it timed out
+                stdout, stderr = process.communicate() # Try to get any final output
+                if stdout:
+                    logging.info(f"UI: Daemon stdout (after timeout kill):\n{stdout.decode(errors='replace')}")
+                if stderr:
+                    logging.error(f"UI: Daemon stderr (after timeout kill):\n{stderr.decode(errors='replace')}")
+        except Exception as e:
+            error_msg = f"UI: Failed to start daemon: {e}"
+            print(error_msg)
+            logging.error(error_msg, exc_info=True)
 
     def stop_daemon(self):
         """Stop the daemon by reading its PID."""
@@ -3119,9 +3098,8 @@ class SettingsWindow(Adw.PreferencesWindow):
                     os.remove(server.DAEMON_PID_LOCATION)
                 print(f"Daemon with PID {pid} signaled to stop.")
             except OSError as e:
-                print(f"Failed to stop daemon with PID {pid}. Error: {e}")
+                logging.info(f"[CRTITICAL]: Failed to stop daemon. {pid}, Error: {e}")
                 if e.errno == errno.ESRCH: # No such process
-                    print(f"Daemon with PID {pid} not found. Removing stale PID file.")
                     if os.path.exists(server.DAEMON_PID_LOCATION):
                         os.remove(server.DAEMON_PID_LOCATION)
         else:

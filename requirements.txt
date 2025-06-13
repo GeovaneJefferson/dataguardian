@@ -1,3 +1,5 @@
+watchdog
 setproctitle
-pygobject
 psutil
+PyGObject
+pycairo

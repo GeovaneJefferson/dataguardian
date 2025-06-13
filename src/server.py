@@ -38,8 +38,8 @@ import math
 
 from datetime import datetime, timedelta
 from pathlib import Path
-#import concurrent.futures
-#from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
@@ -165,9 +165,12 @@ class SERVER:
 		# DAEMON PID
 		# self.DAEMON_PY_LOCATION: str = 'src/daemon.py'
 		# self.DAEMON_PID_LOCATION: str = os.path.join(self.create_base_folder(), 'daemon.pid')
+		
+		# Determine the directory of the current script (server.py)
+		_current_script_dir = os.path.dirname(os.path.abspath(__file__))
 		# Flatpak
-		# self.DAEMON_PY_LOCATION: str = os.path.join(Path.home(), '.var', 'app', self.ID, 'src', 'daemon.py')
-		self.DAEMON_PY_LOCATION: str = os.path.join('/app/share/dataguardian/src', 'daemon.py')
+		# self.DAEMON_PY_LOCATION: str = os.path.join('/app/share/dataguardian/src', 'daemon.py') # Old hardcoded path
+		self.DAEMON_PY_LOCATION: str = os.path.join(_current_script_dir, 'daemon.py') # Path relative to server.py
 		self.DAEMON_PID_LOCATION: str = os.path.join(Path.home(), '.var', 'app', self.ID, 'config', 'daemon.pid')
         
 		self.CACHE = {}
@@ -638,7 +641,7 @@ class SERVER:
 			return None
 
 		except Exception as e:
-			current_function_name = inspect.currentframe().f_code.co_name
+			# current_function_name = inspect.currentframe().f_code.co_name
 			#print(f"Error in function {current_function_name}: {e}")
 			return None
 		
