@@ -36,6 +36,10 @@ modules:
         url: https://github.com/GeovaneJefferson/dataguardian.git
         branch: main
 
+      # - type: dir
+      #   branch: main
+      #   path: . # Use local project directory
+
       - type: file
         path: com.gnome.dataguardian.metainfo.xml
 

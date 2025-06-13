@@ -44,7 +44,7 @@ from watchdog.events import FileSystemEventHandler
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 gi.require_version('Gio', '2.0')
-from gi.repository import Gtk, Adw, Gio, GLib, Gdk, GdkPixbuf, Pango
+from gi.repository import Gtk, Adw, Gio, GLib, Gdk, GdkPixbuf, Pango, GObject
 
 # Ignore SIGPIPE signal, so that the app doesn't crash
 signal.signal(signal.SIGPIPE, signal.SIG_IGN)
@@ -166,11 +166,8 @@ class SERVER:
 		# self.DAEMON_PY_LOCATION: str = 'src/daemon.py'
 		# self.DAEMON_PID_LOCATION: str = os.path.join(self.create_base_folder(), 'daemon.pid')
 		
-		# Determine the directory of the current script (server.py)
-		_current_script_dir = os.path.dirname(os.path.abspath(__file__))
 		# Flatpak
-		# self.DAEMON_PY_LOCATION: str = os.path.join('/app/share/dataguardian/src', 'daemon.py') # Old hardcoded path
-		self.DAEMON_PY_LOCATION: str = os.path.join(_current_script_dir, 'daemon.py') # Path relative to server.py
+		self.DAEMON_PY_LOCATION: str = os.path.join('/app/share/dataguardian/src', 'daemon.py')
 		self.DAEMON_PID_LOCATION: str = os.path.join(Path.home(), '.var', 'app', self.ID, 'config', 'daemon.pid')
         
 		self.CACHE = {}
@@ -617,14 +614,32 @@ class SERVER:
 		try:
 			# Check if config file exists and is loaded
 			if not os.path.exists(self.CONF_LOCATION):
-				raise FileNotFoundError(f"Config file '{self.CONF_LOCATION}' does not exist")
+				logging.warning(f"Config file '{self.CONF_LOCATION}' does not exist. Cannot get value for {section}/{option}.")
+				# Reset self.CONF to an empty state if the file is gone,
+				# so subsequent checks for sections/options don't use stale data.
+				self.CONF = configparser.ConfigParser()
+				return None
+
+			# Re-read the configuration file to get the latest values
+			# This ensures that changes made by other processes (like the UI) are picked up.
+			# Use a temporary parser to avoid issues if the file is malformed during read.
+			temp_conf = configparser.ConfigParser()
+			read_ok = temp_conf.read(self.CONF_LOCATION)
+
+			if read_ok:
+				self.CONF = temp_conf # Update the instance's config object if read was successful
+			else:
+				# Log a warning but continue with the potentially stale self.CONF
+				# This might be preferable to returning None if the file is temporarily unreadable
+				# but was previously read successfully.
+				logging.warning(f"[CRITICAL]: Failed to re-read config file '{self.CONF_LOCATION}' in get_database_value. Using potentially stale data.")
 
 			if not self.CONF.has_section(section):
-				#print(f"Section '{section}' not found in configuration.")
+				#logging.debug(f"Section '{section}' not found in configuration.")
 				return None  # Or return a default value if needed
 
 			if not self.CONF.has_option(section, option):
-				#print(f"Option '{option}' not found in section '{section}'.")
+				#logging.debug(f"Option '{option}' not found in section '{section}'.")
 				return None  # Or return a default value if needed
 
 			# Retrieve and convert the value

@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from has_driver_connection import has_driver_connection
+import sys # For sys.exit
 from server import *
 
 WAIT_TIME = 5  # Minutes between backup checks
@@ -8,48 +9,20 @@ WAIT_TIME = 5  # Minutes between backup checks
 # Default, can be adjusted based on system resources and current load
 DEFAULT_COPY_CONCURRENCY = 2
 
-
-def compute_folder_metadata(folder_path, excluded_dirs=None, excluded_exts=None):
-    """Compute total size, file count, and latest modification time for a folder."""
-    total_size = 0
-    latest_mtime = 0
-    total_files = 0
-
-    excluded_dirs = excluded_dirs or set()
-    excluded_exts = excluded_exts or set()
-
-    for root, dirs, files in os.walk(folder_path):
-        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in excluded_dirs]
-        for f in files:
-            if f.startswith('.') or any(f.endswith(ext) for ext in excluded_exts):
-                continue
-            try:
-                full_path = os.path.join(root, f)
-                stat = os.stat(full_path)
-                total_size += stat.st_size
-                if stat.st_mtime > latest_mtime:
-                    latest_mtime = stat.st_mtime
-                total_files += 1
-            except Exception:
-                pass  # Skip unreadable files
-
-    return {
-        "path": folder_path, # Store the path for which metadata was computed
-        "computed_at": time.time(), # Timestamp of when this metadata was computed
-        # Consider adding a hash of file list and their mtimes for more robust change detection
-        "total_files": total_files,
-        "total_size": total_size,
-        "latest_mtime": latest_mtime
-    }
-
 def send_to_ui(message: str):
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.connect(server.SOCKET_PATH)
         sock.sendall(message.encode("utf-8"))
         sock.close()
-    except Exception:
-        pass  # UI might not be running, ignore
+    except socket.timeout:
+        logging.warning("send_to_ui: Socket operation timed out.")
+    except ConnectionRefusedError:
+        # This is common if UI is not running, can be debug level if too noisy
+        logging.debug("send_to_ui: Connection refused. UI likely not running.")
+    except Exception as e:
+        # Log other unexpected errors during UI communication
+        logging.warning(f"send_to_ui: Error communicating with UI: {e}")
 
 class DownloadsEventHandler(FileSystemEventHandler):
     def __init__(self, daemon_instance):
@@ -78,6 +51,7 @@ class DownloadsEventHandler(FileSystemEventHandler):
                 )
             else:
                 logging.warning("Daemon event loop not available for handling downloaded package from watchdog.")
+
 class Daemon:
     ############################################################################
     # INITIALIZATION AND CONFIGURATION
@@ -85,20 +59,19 @@ class Daemon:
     def __init__(self):
         """Initialize the daemon with necessary configurations and signal handlers."""
         self.copy_concurrency = DEFAULT_COPY_CONCURRENCY # Initialize with default
+        self.executor = None # Initialize before first use in _update_copy_concurrency
+        self.copy_semaphore = None # Initialize before first use in _update_copy_concurrency
 
         self.user_home = server.USER_HOME
-
         self.excluded_dirs = {'__pycache__', 'snap'}
         self.excluded_exts = {'.crdownload', '.part', '.tmp'}
-
         self.ignored_folders = set(os.path.abspath(p) for p in server.load_ignored_folders_from_config())
-
         self.main_backup_dir = server.main_backup_folder()
         self.update_backup_dir = server.backup_folder_name()
         self.interruped_main_file = server.get_interrupted_main_file()
 
-        self.executor = None # Will be initialized/updated in _update_copy_concurrency
-        self.copy_semaphore = None # Will be initialized/updated in _update_copy_concurrency
+        # Initialize/Update executor and semaphore based on current conditions
+        self._update_copy_concurrency()
 
         self.backup_in_progress = False
         self.suspend_flag = False
@@ -106,7 +79,7 @@ class Daemon:
         self.had_writability_issue = False # Tracks if a writability issue was logged
         self.downloads_observer = None # For watchdog
 
-    def _update_copy_concurrency(self):
+    def _update_copy_concurrency(self):  # NONSONAR
         """Determine and update copy concurrency based on CPU cores and current load."""
         try:
             cpu_cores = os.cpu_count()
@@ -149,14 +122,48 @@ class Daemon:
         if signum == signal.SIGTSTP:
             logging.info(f"Received SIGTSTP (suspend), pausing daemon...")
             self.suspend_flag = True
-        else:
+            # Do NOT set self.should_exit = True for SIGTSTP
+        elif signum in (signal.SIGTERM, signal.SIGINT):
             logging.info(f"Received termination signal {signum}, stopping daemon...")
-            self.suspend_flag = True
-            if self.downloads_observer:
+            # self.suspend_flag = True # Not strictly needed if exiting
+            if self.downloads_observer and self.downloads_observer.is_alive():
                 self.downloads_observer.stop()
                 # self.downloads_observer.join() # Join in cleanup or finally
-            # self.executor.shutdown(wait=False) # Consider graceful shutdown for executor
             self.should_exit = True
+
+    def _compute_folder_metadata(self, folder_path, excluded_dirs=None, excluded_exts=None):
+        """Compute total size, file count, and latest modification time for a folder."""
+        total_size = 0
+        latest_mtime = 0
+        total_files = 0
+
+        excluded_dirs = excluded_dirs or set()
+        excluded_exts = excluded_exts or set()
+
+        for root, dirs, files in os.walk(folder_path):
+            if self.should_exit or self.suspend_flag:
+                logging.debug(f"_compute_folder_metadata: Exiting or suspending during walk of {folder_path}.")
+                break 
+            dirs[:] = [d for d in dirs if not d.startswith('.') and d not in excluded_dirs]
+            for f_loop in files: # Renamed f to f_loop
+                if f_loop.startswith('.') or any(f_loop.endswith(ext) for ext in excluded_exts):
+                    continue
+                try:
+                    full_path = os.path.join(root, f_loop)
+                    stat_info = os.stat(full_path) # Renamed stat to stat_info
+                    total_size += stat_info.st_size
+                    if stat_info.st_mtime > latest_mtime:
+                        latest_mtime = stat_info.st_mtime
+                    total_files += 1
+                except Exception:
+                    pass  # Skip unreadable files
+        return {
+            "path": folder_path,
+            "computed_at": time.time(),
+            "total_files": total_files,
+            "total_size": total_size,
+            "latest_mtime": latest_mtime
+        }
     
     def resume_handler(self, signum, frame):
         logging.info(f"Received resume signal {signum}, resuming operations.")
@@ -169,16 +176,11 @@ class Daemon:
         """Checks if the base backup folder is writable."""
         base_path = server.create_base_folder()
         # Check if the path itself can be formed (e.g. DRIVER_LOCATION is set)
-        if not base_path:
-            logging.error("Backup base path is not configured (DRIVER_LOCATION might be empty). Cannot check writability.")
+        try:
+            os.makedirs(base_path, exist_ok=True)
+        except OSError as e:
+            logging.error(f"[CRITICAL]: Backup base path {base_path} does not exist and cannot be created: {e}")
             return False
-
-        if not os.path.exists(base_path):
-            try:
-                os.makedirs(base_path, exist_ok=True)
-            except OSError as e:
-                logging.error(f"Backup base path {base_path} does not exist and cannot be created: {e}")
-                return False
         
         test_file_path = os.path.join(base_path, ".writetest.tmp")
         try:
@@ -187,7 +189,7 @@ class Daemon:
             os.remove(test_file_path)
             return True
         except OSError as e:
-            logging.error(f"Backup location {base_path} is not writable: {e}")
+            logging.error(f"[CRITICAL]: Backup location {base_path} is not writable: {e}")
             return False
 
     ############################################################################
@@ -202,7 +204,7 @@ class Daemon:
                     h.update(chunk)
             return h.hexdigest()
         except Exception as e:
-            logging.error(f"Hash error: {path}: {e}")
+            logging.error(f"[CRITICAL]: Hash error: {path}: {e}")
             return ""
 
     def file_was_updated(self, src: str, rel_path: str) -> bool:
@@ -286,7 +288,7 @@ class Daemon:
                 total_size_bytes = os.path.getsize(src)
                 human_readable_size = server.get_item_size(src, True)
             except OSError as e:
-                logging.error(f"Cannot get size of {src}: {e}")
+                logging.error(f"[CRITICAL]: Cannot get size of {src}: {e}")
                 error_msg = {"id": file_id, "filename": filename, "size": human_readable_size, "eta": "error", "progress": 0.0, "error": f"Cannot access file: {e}"}
                 send_to_ui(json.dumps(error_msg))
                 return
@@ -301,7 +303,7 @@ class Daemon:
                     send_to_ui(json.dumps(error_msg))
                     return
             except Exception as e:
-                logging.error(f"Error checking disk space: {e}")
+                logging.error(f"[CRITICAL]: Error checking disk space: {e}")
                 error_msg = {"id": file_id, "filename": filename, "size": human_readable_size, "eta": "error", "progress": 0.0, "error": f"Disk check failed: {e}"}
                 send_to_ui(json.dumps(error_msg))
                 return
@@ -383,7 +385,7 @@ class Daemon:
                     "eta": "done", "progress": 1.0}
                 send_to_ui(json.dumps(final_msg))
             except Exception as e:
-                logging.error(f"Error copying {src} -> {dst}: {e}")
+                logging.error(f"[CRITICAL]: Error copying {src} -> {dst}: {e}")
                 try:
                     if os.path.exists(tmp_dst):
                         os.remove(tmp_dst)
@@ -416,7 +418,7 @@ class Daemon:
             )
             logging.info(f"Backed up downloaded package: {src_path} -> {dest_path}")
         except Exception as e:
-            logging.error(f"Error backing up downloaded package {src_path} to {dest_path}: {e}")
+            logging.error(f"[CRITICAL]: Error backing up downloaded package {src_path} to {dest_path}: {e}")
 
     async def _handle_downloaded_package(self, src_path: str):
         """Handles a .deb or .rpm file detected in the Downloads folder."""
@@ -461,9 +463,9 @@ class Daemon:
             # but os.replace is atomic on POSIX if src and dst are on the same filesystem.
             os.replace(temp_path, meta_path)
         except OSError as e:
-            logging.error(f"OSError while saving folder metadata for {top_rel_path} at {meta_path}: {e}")
+            logging.error(f"[CRITICAL]: OSError while saving folder metadata for {top_rel_path} at {meta_path}: {e}")
         except Exception as e:
-            logging.error(f"Unexpected error while saving folder metadata for {top_rel_path} at {meta_path}: {e}")
+            logging.error(f"[CRITICAL]: Unexpected error while saving folder metadata for {top_rel_path} at {meta_path}: {e}")
         
     def folder_needs_check(self, rel_folder, current_meta, cached_meta):
         cached = cached_meta.get(rel_folder)
@@ -480,6 +482,10 @@ class Daemon:
     # MAIN BACKUP PROCESS
     ############################################################################
     async def scan_and_backup(self):
+        if self.should_exit or self.suspend_flag:
+            logging.info("scan_and_backup: Exiting or suspending at method start.")
+            return
+
         # Update concurrency settings at the beginning of each scan
         self._update_copy_concurrency()
 
@@ -499,10 +505,14 @@ class Daemon:
             with open(self.interruped_main_file, 'w') as f:
                 f.write("interrupted")
         except OSError as e:
-            logging.error(f"Could not write to interrupted_main_file {self.interruped_main_file}: {e}. "
+            logging.error(f"[CRITICAL]: Could not write to interrupted_main_file {self.interruped_main_file}: {e}. "
                           "Backup may not resume correctly if interrupted again. "
                           "This may indicate a read-only filesystem.")
             # Depending on severity, might return or raise to stop the backup cycle
+
+        if self.should_exit or self.suspend_flag: # Check after writing interrupted file
+            logging.info("scan_and_backup: Exiting or suspending after writing interrupted_main_file.")
+            return
         for entry in os.scandir(self.user_home):
             if (exclude_hidden_master_switch and entry.name.startswith('.')) or \
                entry.name in self.excluded_dirs:
@@ -514,12 +524,20 @@ class Daemon:
             # Skip ignored folders
             if any(os.path.commonpath([src_path, ign]) == ign for ign in self.ignored_folders):
                 continue
+            
+            if self.should_exit or self.suspend_flag:
+                logging.info(f"scan_and_backup: Exiting or suspending before processing entry: {entry.name}")
+                return
 
             if entry.is_dir():
                 cached_meta = self.load_folder_metadata(top_level_rel_path)
                 new_meta = {}
 
                 for root, dirs, files_in_dir in os.walk(src_path): # Renamed 'files' to 'files_in_dir'
+                    if self.should_exit or self.suspend_flag:
+                        logging.info(f"scan_and_backup: Exiting or suspending during os.walk of {src_path}.")
+                        return
+
                     # Filter directories based on hidden status and excluded_dirs
                     dirs[:] = [d for d in dirs if not ((exclude_hidden_master_switch and d.startswith('.')) or \
                                                        d in self.excluded_dirs)]
@@ -529,12 +547,16 @@ class Daemon:
                     }))
                     subfolder_key = os.path.relpath(root, src_path).replace("\\", "/")
         
-                    current_meta = compute_folder_metadata(
+                    current_meta = self._compute_folder_metadata(
                         root,
                         excluded_dirs=self.excluded_dirs,
                         excluded_exts=self.excluded_exts
                     )
                     new_meta[subfolder_key] = current_meta
+
+                    if self.should_exit or self.suspend_flag: # Check after computing metadata
+                        logging.info(f"scan_and_backup: Exiting or suspending after metadata computation for {root}.")
+                        return
 
                     if not self.folder_needs_check(subfolder_key, current_meta, cached_meta):
                         continue
@@ -543,6 +565,10 @@ class Daemon:
                         if (exclude_hidden_master_switch and f_in_dir_loop.startswith('.')) or \
                            any(f_in_dir_loop.endswith(ext) for ext in self.excluded_exts):
                             continue
+                        
+                        if self.should_exit or self.suspend_flag: # Check inside file loop
+                            logging.info(f"scan_and_backup: Exiting or suspending during file processing in {root}.")
+                            return
 
                         fsrc_loop = os.path.join(root, f_in_dir_loop)
                         frel_loop = os.path.relpath(fsrc_loop, self.user_home)
@@ -557,6 +583,10 @@ class Daemon:
                 self.save_folder_metadata(top_level_rel_path, new_meta)
             
             elif entry.is_file():
+                if self.should_exit or self.suspend_flag: # Check before processing top-level file
+                    logging.info(f"scan_and_backup: Exiting or suspending before processing top-level file {entry.name}.")
+                    return
+
                 # This is a top-level file in user_home
                 fsrc = src_path 
                 frel = top_level_rel_path # Relative path of the top-level file
@@ -573,22 +603,47 @@ class Daemon:
                 elif self.file_was_updated(fsrc, frel):
                     session_backup_path = os.path.join(session_backup_dir, frel)
                     tasks.append(self.copy_file(fsrc, session_backup_path, frel))
-    
+
+        if self.should_exit or self.suspend_flag: # Check before gathering tasks
+            logging.info("scan_and_backup: Exiting or suspending before awaiting tasks.")
+            return
+
         if tasks:
             await asyncio.gather(*tasks)
+            # After tasks are gathered, check flags again before proceeding
+            if self.should_exit or self.suspend_flag:
+                logging.info("scan_and_backup: Exiting or suspending after awaiting tasks, before summary.")
+                return
             server.update_recent_backup_information()
             # After backup tasks are complete, generate the summary
             try:
-                sub.run(['python3', os.path.join(os.path.dirname(__file__), 'generate_backup_summary.py')], check=True)
-            except Exception as e:
-                logging.error(f"Failed to generate backup summary: {e}")
+                summary_script_path = os.path.join(os.path.dirname(__file__), 'generate_backup_summary.py')
+                process = sub.run(
+                    ['python3', summary_script_path],
+                    check=True,
+                    capture_output=True, # Capture stdout and stderr
+                    text=True # Decode stdout/stderr as text
+                )
+                # If successful, process.stdout will have the script's print statements/logs
+                logging.info(f"generate_backup_summary.py stdout:\n{process.stdout}")
+                if process.stderr: # Log stderr if any, even on success
+                    logging.warning(f"generate_backup_summary.py stderr (on success?):\n{process.stderr}")
+
+                send_to_ui(json.dumps({"type": "summary_updated"}))
+
+            except sub.CalledProcessError as e: # This will be raised if check=True and script returns non-zero
+                logging.error(f"[CRITICAL]: Failed to generate backup summary. Script: {summary_script_path}, Return code: {e.returncode}")
+                if e.stdout: logging.error(f"generate_backup_summary.py stdout (on error):\n{e.stdout}")
+                if e.stderr: logging.error(f"generate_backup_summary.py stderr (on error):\n{e.stderr}")
+            except Exception as e: # Catch other potential errors like FileNotFoundError for the script itself
+                logging.error(f"[CRITICAL]: Failed to generate backup summary (unexpected error): {e}", exc_info=True)
             logging.info("Backup session complete.")
         
         try:
             if os.path.exists(self.interruped_main_file):
                 os.remove(self.interruped_main_file)
         except OSError as e:
-            logging.error(f"Could not remove interrupted_main_file {self.interruped_main_file}: {e}. "
+            logging.error(f"[CRITICAL]: Could not remove interrupted_main_file {self.interruped_main_file}: {e}. "
                           "This may indicate a read-only filesystem.")
         
         # Cleanup empty incremental folders
@@ -616,7 +671,7 @@ class Daemon:
             # else:
                 # logging.info(f"Incremental session folder {session_backup_dir} is not empty.")
         except OSError as e:
-            logging.error(f"Error during cleanup of empty incremental folders for {session_backup_dir}: {e}")
+            logging.error(f"[CRITICAL]: Error during cleanup of empty incremental folders for {session_backup_dir}: {e}")
 
     ############################################################################
     # INTERRUPTION HANDLING
@@ -628,7 +683,7 @@ class Daemon:
                 logging.info("Backup location is writable. Attempting to resume interrupted backup...")
                 await self.scan_and_backup() 
             else:
-                if not getattr(self, "had_writability_issue", False):
+                if not self.had_writability_issue:
                     logging.critical(f"[CRITICAL]: Backup location {server.create_base_folder()} is not writable. Automatic backups will be disabled by the UI if running.")
                     self.had_writability_issue = True
 
@@ -637,15 +692,50 @@ class Daemon:
     ############################################################################
     async def run(self):
         self.loop = asyncio.get_running_loop() # Store the loop for threadsafe calls
-        await self.resume_from_interruption()
+        self.pid = str(os.getpid())
+        pid_file_path = server.DAEMON_PID_LOCATION
+
+        # Check for existing daemon and manage PID file
+        if os.path.exists(pid_file_path):
+            try:
+                with open(pid_file_path, 'r') as pf:
+                    existing_pid = int(pf.read().strip())
+                if existing_pid != int(self.pid): # Check if it's not self (e.g. from a previous crash)
+                    try:
+                        os.kill(existing_pid, 0) # Check if process exists
+                        logging.error(f"[CRITICAL]: Another daemon instance (PID {existing_pid}) appears to be running. Exiting.")
+                        return # Exit the run method, daemon will stop
+                    except OSError: # Process with existing_pid not running (stale PID file)
+                        logging.warning(f"Stale PID file found for PID {existing_pid}. Removing it.")
+                        os.remove(pid_file_path)
+            except (ValueError, FileNotFoundError, OSError) as e: # Added OSError for os.remove
+                logging.warning(f"Error processing existing PID file {pid_file_path}: {e}. Attempting to remove and continue.")
+                try:
+                    if os.path.exists(pid_file_path): os.remove(pid_file_path)
+                except OSError:
+                    pass # Ignore if removal fails, will try to write next
+
+        # Create new PID file
+        try:
+            os.makedirs(os.path.dirname(pid_file_path), exist_ok=True)
+            with open(pid_file_path, 'w') as pf:
+                pf.write(self.pid)
+            logging.info(f"Daemon (PID: {self.pid}) started. PID file: {pid_file_path}")
+        except Exception as e:
+            logging.critical(f"Failed to create PID file {pid_file_path}: {e}. Daemon cannot start.")
+            return # Exit the run method, daemon will stop
+        # await self.resume_from_interruption()
         shutdown_event = asyncio.Event()
 
-        def stop_loop(signum, frame):
+        # Define signal handlers for use with signal.signal
+        def stop_loop_for_termination(signum, frame): # For SIGTERM, SIGINT
+            logging.debug(f"stop_loop_for_termination called for signal {signum}")
             self.signal_handler(signum, frame)
             shutdown_event.set()
 
-        signal.signal(signal.SIGTERM, stop_loop)
-        signal.signal(signal.SIGINT, stop_loop)
+        # Setup signal handlers
+        signal.signal(signal.SIGTERM, stop_loop_for_termination)
+        signal.signal(signal.SIGINT, stop_loop_for_termination)
         signal.signal(signal.SIGTSTP, self.signal_handler)  # Suspend (Ctrl+Z)
         signal.signal(signal.SIGCONT, self.resume_handler)  # Resume
 
@@ -668,9 +758,10 @@ class Daemon:
                 await asyncio.sleep(5)
                 continue
 
-            if not os.path.exists(server.DAEMON_PID_LOCATION): # Check if daemon should still be running
-                logging.warning("Daemon PID file not found. Shutting down.")
-                self.signal_handler(signal.SIGTERM, None)
+            # Check if the PID file created by this daemon instance was removed externally
+            if not os.path.exists(pid_file_path):
+                logging.warning(f"Daemon PID file {pid_file_path} was removed externally. Shutting down.")
+                self.signal_handler(signal.SIGTERM, None) # This sets self.should_exit = True
                 break
 
             if has_driver_connection():
@@ -684,7 +775,7 @@ class Daemon:
                         logging.critical(f"[CRITICAL]: Backup location {server.create_base_folder()} is not writable. Automatic backups will be disabled by the UI if running.")
                         self.had_writability_issue = True # Set flag to avoid repeated critical logs for the same issue in one session
                     else:
-                        logging.error(f"Backup location {server.create_base_folder()} is still not writable. Skipping backup cycle.")
+                        logging.error(f"[CRITICAL]: Backup location {server.create_base_folder()} is still not writable. Skipping backup cycle.")
             else:
                 logging.info("Backup drive not connected. Skipping backup cycle.")
                 if getattr(self, "had_writability_issue", False): # Reset if drive disconnected
@@ -702,30 +793,37 @@ class Daemon:
                 except asyncio.TimeoutError:
                     elapsed += interval
             
+            if self.should_exit: # If already exiting due to a signal, break before config check
+                logging.debug("Main loop: should_exit is true, breaking before auto_backup_enabled check.")
+                break
+
             # Check if auto backup is still enabled
             auto_backup_enabled = server.get_database_value('BACKUP', 'automatically_backup')
             if str(auto_backup_enabled).lower() != 'true':
-                logging.info("Automatic backup is disabled in configuration. Daemon initiated by auto-start will shut down.")
+                logging.info("Automatic backup is disabled in configuration. Daemon will shut down.")
                 self.signal_handler(signal.SIGTERM, None) # Trigger shutdown
-                break # Exit the loop
+                # self.should_exit will be true now, loop will terminate
 
         # Cleanup observer
         if self.downloads_observer and self.downloads_observer.is_alive():
             self.downloads_observer.stop()
             self.downloads_observer.join()
-            logging.info("Stopped watchdog for Downloads folder.")
-        self.executor.shutdown(wait=True) # Ensure executor tasks complete
+        # Executor shutdown is handled in the main script's finally block
+        # if self.executor:
+        #    self.executor.shutdown(wait=True) 
+
 ################################################################################
 # MAIN EXECUTION BLOCK
 ################################################################################
 if __name__ == "__main__":
+    # Print a message immediately upon starting, before any complex initialization.
     server = SERVER()
 
     # Ensure the directory for the log file exists, attempt to create if not.
     # This is important if DRIVER_LOCATION is initially unavailable.
     log_file_path = server.get_log_file_path()
-    if os.path.exists(log_file_path): # Optional: remove old log on start
-        os.remove(log_file_path)
+    # if os.path.exists(log_file_path): # Optional: remove old log on start
+    #     os.remove(log_file_path)
     os.makedirs(os.path.dirname(log_file_path), exist_ok=True) 
     
     formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
@@ -746,6 +844,6 @@ if __name__ == "__main__":
         daemon = Daemon()
         asyncio.run(daemon.run())
     except Exception as e:
-        logging.error(f"Daemon exception: {e}")
+        logging.error(f"[CRITICAL]: Daemon exception: {e}")
     finally:
         logging.info("Daemon shutting down.")

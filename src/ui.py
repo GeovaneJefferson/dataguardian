@@ -1,16 +1,7 @@
 from server import *
 from device_location import device_location
 from has_driver_connection import has_driver_connection
-from check_package_manager import check_package_manager
-
-try:
-    gi.require_version("Poppler", "0.18")
-    from gi.repository import Poppler
-    POPPLER_AVAILABLE = True
-except Exception:
-    POPPLER_AVAILABLE = False
-    print("Warning: Poppler not available — PDF preview disabled.")
-from gi.repository import GObject # Add this import
+from check_package_manager import check_package_manager #NOSONAR
 
 server = SERVER()  # <-- Instantiate first!
 
@@ -141,7 +132,6 @@ class BackupWindow(Adw.ApplicationWindow):
         ##########################################################################
 		# VARIABLES
 		##########################################################################
-        self.has_connection: bool = has_driver_connection()
         self.selected_file_path: bool = None
         self.documents_path = os.path.expanduser(server.main_backup_folder())
         self.location_buttons: list = []
@@ -184,12 +174,13 @@ class BackupWindow(Adw.ApplicationWindow):
         self._create_header_bar()
         self._create_left_sidebar()
         self._create_main_content()
+
         self._populate_suggested_files() # Add this call
         self._set_initial_daemon_state_and_update_icon()
-    
         self.populate_latest_backups()  # At startup populate with latest backups results
-        # self.update_overview_cards_from_summary() # Load summary data for overview cards
         self._check_for_critical_log_errors() # Check for critical errors at startup
+        # self.update_overview_cards_from_summary() # Load summary data for overview cards
+
         threading.Thread(target=self.start_server, daemon=True).start()  # Start the socket server in a separate thread
 
         # Grab searchbar focus on startup
@@ -215,7 +206,7 @@ class BackupWindow(Adw.ApplicationWindow):
         restore_action = Gio.SimpleAction.new("systemrestore", None)
         restore_action.connect("activate", self.on_restore_system_button_clicked)
         self.add_action(restore_action)
-        restore_action.set_enabled(self.has_connection)
+        restore_action.set_enabled(has_driver_connection())
 
         # Logs Action
         logs_action = Gio.SimpleAction.new("logs", None)
@@ -327,6 +318,70 @@ class BackupWindow(Adw.ApplicationWindow):
         center_box.append(scrolled_window) # Add ScrolledWindow to center_box
         self.main_content.append(center_box)
 
+    def _create_detail_row(self, name, icon_name, color_hex, count_str, size_str):
+        row = Gtk.ListBoxRow()
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5, margin_top=8, margin_bottom=8)
+
+        content_hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6) # Main horizontal container for the row content
+        content_hbox.set_margin_start(6) # Space from the left edge
+        content_hbox.set_margin_end(12) # Space from the right edge
+        content_hbox.set_hexpand(False) # Allow this to take available space
+        content_hbox.set_valign(Gtk.Align.CENTER) # Center align vertically within the row
+
+        # Icon with colored background
+        icon_bg = Gtk.Box()
+        # icon_bg.add_css_class("icon-bg") # General class for base styling
+        # icon_bg.set_size_request(32, 32) # Ensure a consistent size for the bg
+        icon_bg.set_valign(Gtk.Align.CENTER)
+        
+        # Adjust padding for detail row icons specifically if needed, or rely on .icon-bg
+        # For example, if .icon-bg padding is too large:
+        icon_bg.set_margin_start(6) # Custom padding
+        icon_bg.set_margin_end(6) # Space between icon_bg and name_label
+        icon_bg.set_margin_top(6)
+        icon_bg.set_margin_bottom(6)
+
+        icon = Gtk.Image.new_from_icon_name(icon_name)
+        icon.set_pixel_size(16) # Smaller icon for rows
+        icon_bg.append(icon)
+        content_hbox.append(icon_bg)
+
+        # Dynamic CSS for icon background color
+        icon_bg_class_name = f"dyn-icon-bg-{color_hex.replace('#', '')}"
+        icon_bg_css_rule = f""".{icon_bg_class_name} {{
+            background-color: alpha({color_hex}, 0.15);
+            border-radius: 6px; /* Slightly smaller radius for smaller icon */
+            padding: 6px; /* Smaller padding for row icons */
+        }}"""
+        self._add_dynamic_css_rule(icon_bg_css_rule)
+        icon_bg.add_css_class(icon_bg_class_name)
+        
+        # Vertical box for Name and Count
+        name_and_count_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0) # No spacing for tight stacking
+        name_and_count_vbox.set_valign(Gtk.Align.CENTER) # Align this vbox vertically with the icon
+        name_and_count_vbox.set_hexpand(True) # Allow this to take available space
+
+        name_label = Gtk.Label(label=name)
+        name_label.set_xalign(0) # Align left
+        name_and_count_vbox.append(name_label)
+
+        count_label = Gtk.Label(label=count_str)
+        count_label.add_css_class("dim-label")
+        count_label.set_xalign(0) # Align left
+        name_and_count_vbox.append(count_label)
+
+        content_hbox.append(name_and_count_vbox)
+        
+        size_label = Gtk.Label(label=size_str)
+        size_label.set_halign(Gtk.Align.END)
+        # size_label.set_hexpand(True) # No longer needed as name_and_count_vbox expands
+        size_label.set_valign(Gtk.Align.CENTER)
+        content_hbox.append(size_label)
+        box.append(content_hbox)
+        row.set_child(box)
+        row.set_activatable(False)
+        return row
+
     def _create_left_sidebar(self):
         # Dynamic CSS provider for runtime styles (e.g., card accents, icon backgrounds)
         # This should be in your __init__ if not already present.
@@ -358,7 +413,7 @@ class BackupWindow(Adw.ApplicationWindow):
         self.search_entry = Gtk.SearchEntry()
         self.search_entry.set_placeholder_text("Search e.g: text.txt or Documents/text.txt")
         self.search_entry.set_hexpand(True) # Allow it to take available horizontal space in sidebar
-        self.search_entry.set_sensitive(self.has_connection)
+        self.search_entry.set_sensitive(has_driver_connection())
         self.search_entry.connect("search-changed", self.on_search_changed)
         self.search_entry.set_margin_top(0) # Add some space above the search bar
         self.search_entry.set_margin_start(0)
@@ -383,6 +438,7 @@ class BackupWindow(Adw.ApplicationWindow):
         self.current_scan_status_label.set_margin_start(6)
         self.current_scan_status_label.set_margin_end(6)
         self.current_scan_status_label.add_css_class("caption") # Make text smaller
+        self.current_scan_status_label.set_ellipsize(Pango.EllipsizeMode.END)
         self.current_scan_status_card = Adw.Clamp(child=self.current_scan_status_label) # Use Adw.Clamp or Gtk.Frame
         self.current_scan_status_card.set_hexpand(False)
         self.current_scan_status_card.set_maximum_size(200) # Adjust this value as needed
@@ -517,75 +573,11 @@ class BackupWindow(Adw.ApplicationWindow):
             except Exception as e:
                 print(f"Error loading or parsing summary file {summary_file_path}: {e}")
 
-        def _create_detail_row(name, icon_name, color_hex, count_str, size_str):
-            row = Gtk.ListBoxRow()
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5, margin_top=8, margin_bottom=8)
-
-            content_hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6) # Main horizontal container for the row content
-            content_hbox.set_margin_start(6) # Space from the left edge
-            content_hbox.set_margin_end(12) # Space from the right edge
-            content_hbox.set_hexpand(False) # Allow this to take available space
-            content_hbox.set_valign(Gtk.Align.CENTER) # Center align vertically within the row
-
-            # Icon with colored background
-            icon_bg = Gtk.Box()
-            # icon_bg.add_css_class("icon-bg") # General class for base styling
-            # icon_bg.set_size_request(32, 32) # Ensure a consistent size for the bg
-            icon_bg.set_valign(Gtk.Align.CENTER)
-            
-            # Adjust padding for detail row icons specifically if needed, or rely on .icon-bg
-            # For example, if .icon-bg padding is too large:
-            icon_bg.set_margin_start(6) # Custom padding
-            icon_bg.set_margin_end(6) # Space between icon_bg and name_label
-            icon_bg.set_margin_top(6)
-            icon_bg.set_margin_bottom(6)
-
-            icon = Gtk.Image.new_from_icon_name(icon_name)
-            icon.set_pixel_size(16) # Smaller icon for rows
-            icon_bg.append(icon)
-            content_hbox.append(icon_bg)
-
-            # Dynamic CSS for icon background color
-            icon_bg_class_name = f"dyn-icon-bg-{color_hex.replace('#', '')}"
-            icon_bg_css_rule = f""".{icon_bg_class_name} {{
-                background-color: alpha({color_hex}, 0.15);
-                border-radius: 6px; /* Slightly smaller radius for smaller icon */
-                padding: 6px; /* Smaller padding for row icons */
-            }}"""
-            self._add_dynamic_css_rule(icon_bg_css_rule)
-            icon_bg.add_css_class(icon_bg_class_name)
-            
-            # Vertical box for Name and Count
-            name_and_count_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0) # No spacing for tight stacking
-            name_and_count_vbox.set_valign(Gtk.Align.CENTER) # Align this vbox vertically with the icon
-            name_and_count_vbox.set_hexpand(True) # Allow this to take available space
-
-            name_label = Gtk.Label(label=name)
-            name_label.set_xalign(0) # Align left
-            name_and_count_vbox.append(name_label)
-
-            count_label = Gtk.Label(label=count_str)
-            count_label.add_css_class("dim-label")
-            count_label.set_xalign(0) # Align left
-            name_and_count_vbox.append(count_label)
-
-            content_hbox.append(name_and_count_vbox)
-            
-            size_label = Gtk.Label(label=size_str)
-            size_label.set_halign(Gtk.Align.END)
-            # size_label.set_hexpand(True) # No longer needed as name_and_count_vbox expands
-            size_label.set_valign(Gtk.Align.CENTER)
-            content_hbox.append(size_label)
-            box.append(content_hbox)
-            row.set_child(box)
-            row.set_activatable(False)
-            return row
-
         if not items_from_summary: # Fallback or empty state
-            self.details_list.append(_create_detail_row("No summary data", default_icon, default_color, "0 files", "0 B"))
+            self.details_list.append(self._create_detail_row("No summary data", default_icon, default_color, "0 files", "0 B"))
         else:
             for item_data in items_from_summary:
-                self.details_list.append(_create_detail_row(item_data["name"], item_data["icon_name"], item_data["color_hex"], item_data["count"], item_data["size"]))
+                self.details_list.append(self._create_detail_row(item_data["name"], item_data["icon_name"], item_data["color_hex"], item_data["count"], item_data["size"]))
         
 
         # This widget will take up all the extra space
@@ -615,6 +607,7 @@ class BackupWindow(Adw.ApplicationWindow):
         self.device_name_label = Gtk.Label(label=self.device_name_label_text)
         self.device_name_label.add_css_class("title-4") # Or "caption" or other appropriate style
         self.device_name_label.set_xalign(0) # Align text to the left within its allocation
+        self.device_name_label.set_ellipsize(Pango.EllipsizeMode.END) # Add this line
         self.device_name_label.set_hexpand(True) # Allow label to take available space
         device_name_and_status_hbox.append(self.device_name_label)
 
@@ -727,16 +720,42 @@ class BackupWindow(Adw.ApplicationWindow):
         device_selection_win.connect("device-selection-changed", self._on_device_selection_changed_from_modal)
 
     def _on_device_selection_changed_from_modal(self, modal_window, device_selected):
-        self.has_connection = has_driver_connection() # Re-check connection status
         self.driver_location = server.get_database_value(section='DRIVER', option='driver_location')
         self.driver_name = server.get_database_value(section='DRIVER', option='driver_name')
-        self.enable_ui_stuff(device_selected)
+
+        # Update the server instance's in-memory understanding of the driver location and name
+        # This is crucial because server methods like server.main_backup_folder()
+        # use server.DRIVER_LOCATION and server.DRIVER_NAME directly.
+        server.DRIVER_LOCATION = self.driver_location
+        server.DRIVER_NAME = self.driver_name
+
+        # Update path for file scanning, as it depends on the driver_location
+        self.documents_path = os.path.expanduser(server.main_backup_folder())
+
+        if os.path.exists(server.backup_folder_name()):
+            self.search_entry.set_sensitive(bool(has_driver_connection()))
+
         GLib.idle_add(self._refresh_left_sidebar_summary_and_usage) # Refresh on device change
+        GLib.idle_add(self._populate_suggested_files) # Refresh suggested files
+        GLib.idle_add(self._set_initial_daemon_state_and_update_icon) # Refresh daemon state icon
+        GLib.idle_add(self.populate_latest_backups) # Refresh latest backups
+        GLib.idle_add(self._check_for_critical_log_errors) # Check for critical errors
+        
+        # Reset and restart file scanning for search functionality
+        self.files_loaded = False
+        self.files = []
+        self.file_names_lower = []
+        self.file_search_display_paths_lower = []
+        self.search_results = [] # Clear previous search results
+        GLib.idle_add(self.populate_results, []) # Clear the listbox UI of old results
+        if has_driver_connection(): # Only scan if a device is connected and selected
+            self.scan_files_folder_threaded()
+
         # Update daemon state based on new connection status
         self._set_initial_daemon_state_and_update_icon()
         
     def _set_initial_daemon_state_and_update_icon(self):
-        if not self.has_connection:
+        if not has_driver_connection():
             self.current_daemon_state = "disconnected"
         elif os.path.exists(server.get_interrupted_main_file()):
             self.current_daemon_state = "interrupted"
@@ -780,16 +799,6 @@ class BackupWindow(Adw.ApplicationWindow):
         self.status_icon.set_from_icon_name(icon_name)
         self.status_icon.set_tooltip_text(tooltip)
 
-    def enable_ui_stuff(self, state:bool):   
-        """
-        True: Enable stuff on the UI. 
-        False: Disable stuff on the UI.
-        """
-        # Already a backup made and has connection
-        if os.path.exists(server.backup_folder_name()) and self.has_connection:
-            # Enable stuff if has connection to backup device
-            self.search_entry.set_sensitive(state)
-
     def on_listbox_selection_changed(self, listbox, row):
         if row:
             path: str = getattr(row, "device_path", None)
@@ -804,9 +813,6 @@ class BackupWindow(Adw.ApplicationWindow):
         # Show latest backup files on startup
         latest_files = self.get_latest_backup_files()
         if latest_files:
-            for f in latest_files:
-                print(f)  # Debug: print the file paths
-                pass
             # Optionally, populate your listbox or UI with these files
             self.populate_results([{"name": os.path.basename(f), "path": f, "date": os.path.getmtime(f)} for f in latest_files])
         else:
@@ -910,7 +916,7 @@ class BackupWindow(Adw.ApplicationWindow):
         It's kept for now in case some initial "waiting" state is desired,
         but for the current request, it does nothing.
         """
-        if not self.has_connection:
+        if not has_driver_connection():
             # self.scan_status_revealer.set_reveal_child(False) # Or true with a message
             return
         # If no specific folder is scanning yet, the card remains hidden by default.
@@ -1023,10 +1029,10 @@ class BackupWindow(Adw.ApplicationWindow):
 
         # Re-use the _create_detail_row helper method
         if not items_from_summary:
-            self.details_list.append(self._create_left_sidebar._create_detail_row("No summary data", default_icon, default_color, "0 files", "0 B"))
+            self.details_list.append(self._create_detail_row("No summary data", default_icon, default_color, "0 files", "0 B"))
         else:
             for item_data in items_from_summary:
-                self.details_list.append(self._create_left_sidebar._create_detail_row(item_data["name"], item_data["icon_name"], item_data["color_hex"], item_data["count"], item_data["size"]))
+                self.details_list.append(self._create_detail_row(item_data["name"], item_data["icon_name"], item_data["color_hex"], item_data["count"], item_data["size"]))
 
         # 2. Refresh Device Usage (within self.usage_box)
         self.device_name_label.set_text(self.driver_name if self.driver_name else "N/A")
@@ -1069,7 +1075,7 @@ class BackupWindow(Adw.ApplicationWindow):
         # b) Overall most frequent
         # c) System recent files
 
-        if self.has_connection and os.path.exists(summary_file_path):
+        if has_driver_connection() and os.path.exists(summary_file_path):
             try:
                 with open(summary_file_path, 'r') as f:
                     summary_data = json.load(f)
@@ -1226,9 +1232,7 @@ class BackupWindow(Adw.ApplicationWindow):
         mime, _ = mimetypes.guess_type(filepath)
         if mime is None: mime = ""
 
-        if (ext == ".pdf" or mime == "application/pdf") and POPPLER_AVAILABLE:
-            preview_widget = self._create_pdf_preview_widget(filepath)
-        elif (ext in server.TEXT_EXTENSIONS or mime.startswith("text")):
+        if (ext in server.TEXT_EXTENSIONS or mime.startswith("text")): #NOSONAR #NOSONAR
             preview_widget = self._create_text_preview_widget(filepath)
         elif (ext in server.IMAGE_EXTENSIONS or mime.startswith("image")):
             preview_widget = self._create_image_preview_widget(filepath)
@@ -1263,44 +1267,6 @@ class BackupWindow(Adw.ApplicationWindow):
 
         modal_preview_win.set_content(modal_main_box) # Set the main box as the window's content
         modal_preview_win.present()
-
-    def _create_pdf_preview_widget(self, filepath):
-        try:
-            document = Poppler.Document.new_from_file(f"file://{filepath}", None)
-            page = document.get_page(0) # Preview first page
-            width, height = page.get_size()
-            
-            # Determine a reasonable max width/height for the preview in the modal
-            # This is a bit arbitrary, could be based on modal window size later
-            # For now, let's aim for a max width like 600px.
-            target_preview_width = 600 
-
-            scale = target_preview_width / width if width > 0 else 1.0
-            # If scaling makes it too tall, scale by height instead
-            # (e.g. if modal height is constrained, but for now we don't know modal height yet)
-            # For simplicity, we'll just scale by width for now.
-
-            surf_width = int(width * scale)
-            surf_height = int(height * scale)
-
-            surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, surf_width, surf_height)
-            cr = cairo.Context(surface)
-            cr.save() 
-            cr.set_source_rgb(1, 1, 1)  # White background
-            cr.paint()
-            cr.restore() 
-            cr.scale(scale, scale)
-            page.render(cr)
-            surface.flush()
-
-            pixbuf = Gdk.pixbuf_get_from_surface(surface, 0, 0, surf_width, surf_height)
-            image = Gtk.Image.new_from_pixbuf(pixbuf)
-            image.set_vexpand(True) 
-            image.set_hexpand(True)
-            return image
-        except Exception as e:
-            print(f"Failed to create PDF preview widget for {filepath}: {e}")
-            return None
 
     def _create_text_preview_widget(self, filepath):
         try:
@@ -1634,24 +1600,6 @@ class BackupWindow(Adw.ApplicationWindow):
                 scale_h = size_px / img_height if img_height > 0 else 1
                 scale = min(scale_w, scale_h)
                 pixbuf = temp_pixbuf.scale_simple(int(img_width * scale), int(img_height * scale), GdkPixbuf.InterpType.BILINEAR)
-
-            elif (ext == ".pdf" or mime == "application/pdf") and POPPLER_AVAILABLE:
-                doc = Poppler.Document.new_from_file(f"file://{file_path}", None)
-                page = doc.get_page(0)
-                p_width, p_height = page.get_size()
-
-                scale_w = size_px / p_width if p_width > 0 else 1
-                scale_h = size_px / p_height if p_height > 0 else 1
-                scale = min(scale_w, scale_h)
-                
-                thumb_width = int(p_width * scale)
-                thumb_height = int(p_height * scale)
-
-                surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, thumb_width, thumb_height)
-                cr = cairo.Context(surface)
-                cr.scale(scale, scale)
-                page.render(cr)
-                pixbuf = Gdk.pixbuf_get_from_surface(surface, 0, 0, thumb_width, thumb_height)
         except Exception as e:
             print(f"Error generating thumbnail for {file_path}: {e}")
             pixbuf = None # Ensure pixbuf is None on error
@@ -1783,10 +1731,9 @@ class BackupWindow(Adw.ApplicationWindow):
             mime_preview, _ = mimetypes.guess_type(filepath_for_preview)
             if mime_preview is None: mime_preview = ""
 
-            is_previewable = False
-            if (ext_preview == ".pdf" or mime_preview == "application/pdf") and POPPLER_AVAILABLE and os.path.exists(filepath_for_preview):
-                is_previewable = True
-            elif (ext_preview in server.TEXT_EXTENSIONS or mime_preview.startswith("text")) and os.path.exists(filepath_for_preview):
+            is_previewable = False #NOSONAR
+            # PDF Preview Removed
+            if (ext_preview in server.TEXT_EXTENSIONS or mime_preview.startswith("text")) and os.path.exists(filepath_for_preview): #NOSONAR
                 is_previewable = True
             elif (ext_preview in server.IMAGE_EXTENSIONS or mime_preview.startswith("image")) and os.path.exists(filepath_for_preview):
                 is_previewable = True
@@ -1893,14 +1840,11 @@ class BackupWindow(Adw.ApplicationWindow):
         mime, _ = mimetypes.guess_type(filepath)
         if mime is None:
             mime = ""
-
-        # Only allow preview for supported types
+        # Only allow preview for supported types - PDF preview removed #NOSONAR
         previewable = False
         IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg"}
         TEXT_EXTENSIONS = {".txt", ".py", ".md", ".csv", ".json", ".xml", ".ini", ".log", ".gd", ".js", ".html", ".css", ".sh", ".c", ".cpp", ".h", ".hpp", ".java", ".rs", ".go", ".toml", ".yml", ".yaml"}
-        if (ext == ".pdf" or mime == "application/pdf") and POPPLER_AVAILABLE and os.path.exists(filepath):
-            previewable = True
-        elif (ext in TEXT_EXTENSIONS or mime.startswith("text")) and os.path.exists(filepath):
+        if (ext in TEXT_EXTENSIONS or mime.startswith("text")) and os.path.exists(filepath): #NOSONAR #NOSONAR
             previewable = True
         elif (ext in IMAGE_EXTENSIONS or mime.startswith("image")) and os.path.exists(filepath):
             previewable = True
@@ -1951,10 +1895,8 @@ class BackupWindow(Adw.ApplicationWindow):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         scrolled.set_child(box)
 
-        if (ext == ".pdf" or mime == "application/pdf") and POPPLER_AVAILABLE and os.path.exists(filepath):
-            label = Gtk.Label(label="PDF preview not implemented in popup")
-            box.append(label)
-        elif (ext in TEXT_EXTENSIONS or mime.startswith("text")) and os.path.exists(filepath):
+        # PDF Preview removed
+        if (ext in TEXT_EXTENSIONS or mime.startswith("text")) and os.path.exists(filepath): #NOSONAR #NOSONAR
             with open(filepath, "r", encoding="utf-8") as f:
                 text = f.read(4096)
             textview = Gtk.TextView()
@@ -3045,45 +2987,48 @@ class SettingsWindow(Adw.PreferencesWindow):
 
     def start_daemon(self):
         """Start the daemon and store its PID, ensuring only one instance runs."""
-        try:
-            # Start a new daemon process
-            daemon_cmd = ['python3', server.DAEMON_PY_LOCATION]
-            logging.info(f"UI: Attempting to start daemon with command: {' '.join(daemon_cmd)}")
-            print(f"UI: Attempting to start daemon with command: {' '.join(daemon_cmd)}")
+        def _do_start_daemon():
+            process = None # Initialize process to None
+            try:
+                # Start a new daemon process
+                daemon_cmd = ['python3', server.DAEMON_PY_LOCATION]
+                logging.info(f"UI: Attempting to start daemon with command: {' '.join(daemon_cmd)}")
+                print(f"UI: Attempting to start daemon with command: {' '.join(daemon_cmd)}")
 
-            process = sub.Popen(
-                daemon_cmd,
-                start_new_session=True,
-                close_fds=True,
-                stdout=sub.PIPE,  # Capture standard output
-                stderr=sub.PIPE   # Capture standard error
-            )
+                process = sub.Popen(
+                    daemon_cmd,
+                    start_new_session=True,
+                    close_fds=True,
+                    stdout=sub.PIPE,  # Capture standard output
+                    stderr=sub.PIPE   # Capture standard error
+                )
 
-            # Get the output and errors (if any)
-            # You can set a timeout to prevent blocking indefinitely if the daemon hangs
-            stdout, stderr = process.communicate(timeout=5) # Timeout in seconds
+                # Get the output and errors (if any)
+                # You can set a timeout to prevent blocking indefinitely if the daemon hangs
+                stdout, stderr = process.communicate(timeout=10) # Increased timeout slightly
 
-            # Store the new PID in the file
-            with open(server.DAEMON_PID_LOCATION, 'w') as f:
-                f.write(str(process.pid))
-            logging.info(f"UI: Daemon process launched with PID {process.pid}.")
-            if stdout:
-                logging.info(f"UI: Daemon stdout:\n{stdout.decode(errors='replace')}")
-            if stderr:
-                logging.error(f"UI: Daemon stderr:\n{stderr.decode(errors='replace')}")
-        except Exception as e:
-            logging.error(f"UI: Timeout expired while starting daemon or getting its initial output. PID: {process.pid if process else 'N/A'}")
-            if process:
-                process.kill() # Ensure the process is killed if it timed out
-                stdout, stderr = process.communicate() # Try to get any final output
+                # Store the new PID in the file
+                with open(server.DAEMON_PID_LOCATION, 'w') as f:
+                    f.write(str(process.pid))
+                logging.info(f"UI: Daemon process launched with PID {process.pid}.")
                 if stdout:
-                    logging.info(f"UI: Daemon stdout (after timeout kill):\n{stdout.decode(errors='replace')}")
+                    logging.info(f"UI: Daemon stdout:\n{stdout.decode(errors='replace')}")
                 if stderr:
-                    logging.error(f"UI: Daemon stderr (after timeout kill):\n{stderr.decode(errors='replace')}")
-        except Exception as e:
-            error_msg = f"UI: Failed to start daemon: {e}"
-            print(error_msg)
-            logging.error(error_msg, exc_info=True)
+                    logging.error(f"UI: Daemon stderr:\n{stderr.decode(errors='replace')}")
+            except sub.TimeoutExpired:
+                logging.error(f"UI: Timeout expired while starting daemon or getting its initial output. PID: {process.pid if process else 'N/A'}")
+                if process:
+                    process.kill() # Ensure the process is killed if it timed out
+                    stdout, stderr = process.communicate() # Try to get any final output
+                    if stdout:
+                        logging.info(f"UI: Daemon stdout (after timeout kill):\n{stdout.decode(errors='replace')}")
+                    if stderr:
+                        logging.error(f"UI: Daemon stderr (after timeout kill):\n{stderr.decode(errors='replace')}")
+            except Exception as e:
+                error_msg = f"UI: Failed to start daemon: {e}"
+                print(error_msg)
+                logging.error(error_msg, exc_info=True)
+        threading.Thread(target=_do_start_daemon, daemon=True).start()
 
     def stop_daemon(self):
         """Stop the daemon by reading its PID."""
@@ -3238,6 +3183,7 @@ class BackupProgressRow(Gtk.Box):
         self.filename_label = Gtk.Label(label=filename)
         self.filename_label.set_xalign(0)
         self.filename_label.set_max_width_chars(32)
+        self.filename_label.set_ellipsize(Pango.EllipsizeMode.END)
 
         self.size_eta_label = Gtk.Label(label=f"{size} • {eta}")
         self.size_eta_label.set_xalign(0)
