@@ -342,7 +342,8 @@ class BackupWindow(Adw.ApplicationWindow):
         if not hasattr(self, '_add_dynamic_css_rule'):
             self._add_dynamic_css_rule = self._default_add_dynamic_css_rule_impl
         
-        left_sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        left_sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6
+        )
         left_sidebar.set_size_request(240, -1) # Slightly wider for device info
         left_sidebar.add_css_class("left-sidebar")
         left_sidebar.set_margin_top(12)

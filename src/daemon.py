@@ -621,7 +621,9 @@ class Daemon:
                 logging.info("Backup location is writable. Attempting to resume interrupted backup...")
                 await self.scan_and_backup() 
             else:
-                logging.warning("Backup location not writable. Cannot resume interrupted backup at this time. Will retry later.")
+                if not getattr(self, "had_writability_issue", False):
+                    logging.critical(f"[CRITICAL]: Backup location {server.create_base_folder()} is not writable. Automatic backups will be disabled by the UI if running.")
+                    self.had_writability_issue = True
 
     ############################################################################
     # DAEMON MAIN RUN LOOP
