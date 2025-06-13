@@ -2937,6 +2937,7 @@ class SettingsWindow(Adw.PreferencesWindow):
                 [Desktop Entry]
                 Type=Application
                 Exec=flatpak run --command=python3 {server.ID} /app/share/{server.APP_NAME_CLOSE_LOWER}/src/at_boot.py
+                Icon={server.ID}
                 X-GNOME-Autostart-enabled=true
                 Name={server.APP_NAME}
                 Comment[en_US]=Automatically start {server.APP_NAME}
