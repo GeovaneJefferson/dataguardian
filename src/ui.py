@@ -746,14 +746,19 @@ class BackupWindow(Adw.ApplicationWindow):
 
     def _update_status_icon_display(self):
         icon_name = "dialog-information-symbolic" # Default: idle
-        tooltip = "Monitoring for file changes. Waiting for next backup cycle."
+        tooltip = "Daemon is idle. Monitoring for file changes and waiting for next backup cycle."
+        daemon_is_actually_running = server.is_daemon_running()
 
         if self.current_daemon_state == "disconnected":
             icon_name = "network-offline-symbolic"
             tooltip = "Backup device not connected."
         elif self.current_daemon_state == "interrupted":
-            icon_name = "dialog-warning-symbolic"
-            tooltip = "Interrupted backup pending. Daemon will attempt to resume."
+            if daemon_is_actually_running:
+                icon_name = "dialog-warning-symbolic"
+                tooltip = "Interrupted backup pending. Daemon is running and will attempt to resume."
+            else:
+                icon_name = "error-symbolic" # Or a different icon indicating daemon is not running
+                tooltip = "Interrupted backup pending, but the daemon is NOT running. Please start it manually or check settings."
         elif self.current_daemon_state == "scanning":
             icon_name = "view-refresh-symbolic" # Or "system-search-symbolic"
             tooltip = "Scanning files for backup..."
@@ -763,7 +768,13 @@ class BackupWindow(Adw.ApplicationWindow):
         elif self.current_daemon_state == "restoring":
             icon_name = "document-revert-symbolic" # Icon for restoring
             tooltip = "Restoring files..."
-
+        elif self.current_daemon_state == "idle":
+            if daemon_is_actually_running:
+                icon_name = "media-playback-start-symbolic" # Or "emblem-ok-symbolic" or "security-high-symbolic"
+                tooltip = "Daemon is active and monitoring for file changes. Waiting for next backup cycle."
+            else:
+                icon_name = "media-playback-stop-symbolic" # Or "dialog-error-symbolic"
+                tooltip = "Daemon is NOT running. Automatic backups are off or an error occurred."
         # "idle" uses the default icon_name and tooltip
 
         self.status_icon.set_from_icon_name(icon_name)

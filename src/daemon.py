@@ -1,9 +1,24 @@
 from concurrent.futures import ThreadPoolExecutor
 from has_driver_connection import has_driver_connection
-from server import *
+from server import SERVER # Explicitly import SERVER class
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-
+import os
+import json
+import time
+import asyncio
+import signal
+import shutil
+import hashlib
+import tempfile
+import logging
+import socket
+import sys
+import psutil
+import subprocess as sub # For generate_backup_summary.py call
+from datetime import datetime # For session_backup_dir naming
+import atexit # For PID file cleanup
+import setproctitle # For process naming
 WAIT_TIME = 5  # Minutes between backup checks
 
 # Concurrency settings for copying files
@@ -37,13 +52,14 @@ def compute_folder_metadata(folder_path, excluded_dirs=None, excluded_exts=None)
 
     return {
         "path": folder_path, # Store the path for which metadata was computed
-        "computed_at": time.time(), # Timestamp of when this metadata was computed
+        "computed_at": time.time(),
         # Consider adding a hash of file list and their mtimes for more robust change detection
         "total_files": total_files,
         "total_size": total_size,
         "latest_mtime": latest_mtime
     }
 
+_send_to_ui_server_instance = SERVER() # Instance for send_to_ui to get SOCKET_PATH
 def send_to_ui(message: str):
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -85,6 +101,8 @@ class Daemon:
     # INITIALIZATION AND CONFIGURATION
     ############################################################################
     def __init__(self):  # NONSONAR 
+        self.server = SERVER() # Daemon creates its own SERVER instance
+
         """Initialize the daemon with necessary configurations and signal handlers."""
         # Determine copy concurrency based on CPU cores and current load
         try:
@@ -118,16 +136,16 @@ class Daemon:
             )
             self.copy_concurrency = DEFAULT_COPY_CONCURRENCY
 
-        self.user_home = server.USER_HOME
+        self.user_home = self.server.USER_HOME
 
         self.excluded_dirs = {'__pycache__', 'snap'}
         self.excluded_exts = {'.crdownload', '.part', '.tmp'}
 
-        self.ignored_folders = set(os.path.abspath(p) for p in server.load_ignored_folders_from_config())
+        self.ignored_folders = set(os.path.abspath(p) for p in self.server.load_ignored_folders_from_config())
 
-        self.main_backup_dir = server.main_backup_folder()
-        self.update_backup_dir = server.backup_folder_name()
-        self.interruped_main_file = server.get_interrupted_main_file()
+        self.main_backup_dir = self.server.main_backup_folder()
+        self.update_backup_dir = self.server.backup_folder_name()
+        self.interruped_main_file = self.server.get_interrupted_main_file()
 
         self.executor = ThreadPoolExecutor(max_workers=self.copy_concurrency)
         self.copy_semaphore = asyncio.Semaphore(self.copy_concurrency)
@@ -163,7 +181,7 @@ class Daemon:
     ############################################################################
     def is_backup_location_writable(self) -> bool:
         """Checks if the base backup folder is writable."""
-        base_path = server.create_base_folder()
+        base_path = self.server.create_base_folder()
         # Check if the path itself can be formed (e.g. DRIVER_LOCATION is set)
         if not base_path:
             logging.error("Backup base path is not configured (DRIVER_LOCATION might be empty). Cannot check writability.")
@@ -209,8 +227,7 @@ class Daemon:
             logging.warning(f"File '{rel_path}' not found at source '{src}'. Cannot compare.")
             return False
         # Add a src_hash_cache to avoid re-calculating hash for the same source file
-
-        backup_dates = server.has_backup_dates_to_compare()
+        backup_dates = self.server.has_backup_dates_to_compare()
         for date_folder in backup_dates:
             try:
                 datetime.strptime(date_folder, "%d-%m-%Y")
@@ -280,13 +297,12 @@ class Daemon:
 
             try:
                 total_size_bytes = os.path.getsize(src)
-                human_readable_size = server.get_item_size(src, True)
+                human_readable_size = self.server.get_item_size(src, True)
             except OSError as e:
                 logging.error(f"Cannot get size of {src}: {e}")
                 error_msg = {"id": file_id, "filename": filename, "size": human_readable_size, "eta": "error", "progress": 0.0, "error": f"Cannot access file: {e}"}
                 send_to_ui(json.dumps(error_msg))
                 return
-
             # Check for sufficient disk space
             threshold_bytes = 2 * 1024 * 1024 * 1024  # 2 GB
             try:
@@ -420,9 +436,9 @@ class Daemon:
             return
 
         filename = os.path.basename(src_path)
-        dest_folder = None
-        if filename.endswith(".deb"): dest_folder = server.deb_main_folder()
-        elif filename.endswith(".rpm"): dest_folder = server.rpm_main_folder()
+        dest_folder = None #NOSONAR
+        if filename.endswith(".deb"): dest_folder = self.server.deb_main_folder()
+        elif filename.endswith(".rpm"): dest_folder = self.server.rpm_main_folder()
 
         if dest_folder and server.DRIVER_LOCATION and self.is_backup_location_writable():
             await self._backup_package_file(src_path, dest_folder)
@@ -484,8 +500,8 @@ class Daemon:
 
         # Reload ignored folders and hidden items preference at the start of each scan
         self.ignored_folders = set(os.path.abspath(p) for p in server.load_ignored_folders_from_config())
-        exclude_hidden_master_switch = server.get_database_value(section='EXCLUDE', option='exclude_hidden_itens')
-        if exclude_hidden_master_switch is None: # Default to True if not set
+        exclude_hidden_master_switch = self.server.get_database_value(section='EXCLUDE', option='exclude_hidden_itens')
+        if exclude_hidden_master_switch is None:  # Default to True if not set
             exclude_hidden_master_switch = True
 
         try:
@@ -569,7 +585,7 @@ class Daemon:
     
         if tasks:
             await asyncio.gather(*tasks)
-            server.update_recent_backup_information()
+            self.server.update_recent_backup_information()
             # After backup tasks are complete, generate the summary
             try:
                 sub.run(['python3', os.path.join(os.path.dirname(__file__), 'generate_backup_summary.py')], check=True)
@@ -622,9 +638,8 @@ class Daemon:
                 await self.scan_and_backup() 
             else:
                 if not getattr(self, "had_writability_issue", False):
-                    logging.critical(f"[CRITICAL]: Backup location {server.create_base_folder()} is not writable. Automatic backups will be disabled by the UI if running.")
+                    logging.critical(f"[CRITICAL]: Backup location {self.server.create_base_folder()} is not writable. Automatic backups will be disabled by the UI if running.")
                     self.had_writability_issue = True
-
     ############################################################################
     # DAEMON MAIN RUN LOOP
     ############################################################################
@@ -661,7 +676,7 @@ class Daemon:
                 await asyncio.sleep(5)
                 continue
 
-            if not os.path.exists(server.DAEMON_PID_LOCATION): # Check if daemon should still be running
+            if not os.path.exists(self.server.DAEMON_PID_LOCATION): # Check if daemon should still be running
                 logging.warning("Daemon PID file not found. Shutting down.")
                 self.signal_handler(signal.SIGTERM, None)
                 break
@@ -674,10 +689,10 @@ class Daemon:
                 else:
                     # Log critical only if this is a new or persistent issue
                     if not getattr(self, "had_writability_issue", False):
-                        logging.critical(f"[CRITICAL]: Backup location {server.create_base_folder()} is not writable. Automatic backups will be disabled by the UI if running.")
+                        logging.critical(f"[CRITICAL]: Backup location {self.server.create_base_folder()} is not writable. Automatic backups will be disabled by the UI if running.")
                         self.had_writability_issue = True # Set flag to avoid repeated critical logs for the same issue in one session
                     else:
-                        logging.error(f"Backup location {server.create_base_folder()} is still not writable. Skipping backup cycle.")
+                        logging.error(f"Backup location {self.server.create_base_folder()} is still not writable. Skipping backup cycle.")
             else:
                 logging.info("Backup drive not connected. Skipping backup cycle.")
                 if getattr(self, "had_writability_issue", False): # Reset if drive disconnected
@@ -696,7 +711,7 @@ class Daemon:
                     elapsed += interval
             
             # Check if auto backup is still enabled
-            auto_backup_enabled = server.get_database_value('BACKUP', 'automatically_backup')
+            auto_backup_enabled = self.server.get_database_value('BACKUP', 'automatically_backup')
             if str(auto_backup_enabled).lower() != 'true':
                 logging.info("Automatic backup is disabled in configuration. Daemon initiated by auto-start will shut down.")
                 self.signal_handler(signal.SIGTERM, None) # Trigger shutdown
@@ -712,13 +727,13 @@ class Daemon:
 # MAIN EXECUTION BLOCK
 ################################################################################
 if __name__ == "__main__":
-    server = SERVER()
+    server = SERVER() # Instance for __main__ block's direct needs
 
     # Ensure the directory for the log file exists, attempt to create if not.
     # This is important if DRIVER_LOCATION is initially unavailable.
     log_file_path = server.get_log_file_path()
     # if os.path.exists(log_file_path): # Optional: remove old log on start
-    #     os.remove(log_file_path)
+    # os.remove(log_file_path)
     os.makedirs(os.path.dirname(log_file_path), exist_ok=True) 
     
     formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
@@ -735,10 +750,51 @@ if __name__ == "__main__":
     
     setproctitle.setproctitle(f'{server.APP_NAME} - daemon')
 
+    # --- PID File Management for Standalone Execution ---
+    pid_file = server.DAEMON_PID_LOCATION
+    if os.path.exists(pid_file):
+        try:
+            with open(pid_file, 'r') as f:
+                pid = int(f.read().strip())
+            os.kill(pid, 0) 
+            logging.error(f"Daemon already running with PID {pid} (found in {pid_file}). Exiting.")
+            sys.exit(1)
+        except (ValueError, OSError): 
+            logging.warning(f"Stale PID file found ({pid_file}). Removing.")
+            try:
+                os.remove(pid_file)
+            except OSError as e:
+                logging.error(f"Could not remove stale PID file {pid_file}: {e}")
+                sys.exit(1) 
+
+    try:
+        os.makedirs(os.path.dirname(pid_file), exist_ok=True)
+        with open(pid_file, 'w') as f:
+            f.write(str(os.getpid()))
+        logging.info(f"Daemon started with PID {os.getpid()}, PID file {pid_file} created.")
+    except OSError as e:
+        logging.error(f"Could not write PID file {pid_file}: {e}")
+        sys.exit(1)
+
+    def cleanup_pid_file_on_exit():
+        logging.info(f"Cleaning up PID file {pid_file} for PID {os.getpid()}.")
+        try:
+            if os.path.exists(pid_file):
+                with open(pid_file, 'r') as f_check:
+                    pid_in_file = int(f_check.read().strip())
+                if pid_in_file == os.getpid():
+                    os.remove(pid_file)
+                else:
+                    logging.warning(f"PID in {pid_file} ({pid_in_file}) does not match current PID ({os.getpid()}). Not removing.")
+        except (ValueError, OSError, FileNotFoundError) as e_cleanup: # Added FileNotFoundError
+            logging.error(f"Error removing PID file {pid_file}: {e_cleanup}")
+
+    atexit.register(cleanup_pid_file_on_exit)
+
     try:
         daemon = Daemon()
         asyncio.run(daemon.run())
     except Exception as e:
-        logging.error(f"Daemon exception: {e}")
+        logging.critical(f"Daemon crashed: {e}", exc_info=True)
     finally:
         logging.info("Daemon shutting down.")
