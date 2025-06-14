@@ -1,69 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
   <id>com.gnome.dataguardian</id>
-  <license>GPL-3.0-only</license>
   <name>Data Guardian</name>
-  <summary>Your personal, vigilant backup assistant for Linux desktops</summary>
-
-  <developer_name>Geovane Jefferson</developer_name>
-
+  <summary>A file backup and versioning tool</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
   <description>
     <p>
-      Data Guardian is a powerful Python-based backup solution designed to keep your important files, settings, and applications safe with minimal effort. It combines an intelligent daemon, a modern GTK4-based GUI, and advanced backup strategies to deliver a seamless, reliable data protection experience.
-    </p>
-    <p>Key Features:</p>
-    <ul>
-      <li>Automatic &amp; Incremental Backups: Effortless, continuous protection with intelligent versioning.</li>
-      <li>Smart &amp; Selective Backup: Configure exclusions for directories, file types, or hidden files.</li>
-      <li>External Drive Integration: Detects and backs up to your selected external storage.</li>
-      <li>Robust Backup Integrity: Uses SHA-256 hashing, size, and modification time checks. Resilient to interruptions.</li>
-      <li>Comprehensive Application Backup: Saves a list of installed Flatpak applications.</li>
-      <li>Modern, User-Friendly GUI: Built with GTK4 and Libadwaita for intuitive control.</li>
-      <li>Resilient &amp; Configurable Daemon: Handles signals, device changes, and offers detailed logging.</li>
+      Data Guardian is a backup tool designed specifically for Linux users. It continuously monitors your files for any new updates and immediately backs them up while maintaining previous versions for easy recovery. This ensures that your important files are always up to date and securely stored.
     </p>
   </description>
-
   <launchable type="desktop-id">com.gnome.dataguardian.desktop</launchable>
-  <icon type="cached">com.gnome.dataguardian</icon>
-
   <screenshots>
     <screenshot type="default">
       <image>https://raw.githubusercontent.com/GeovaneJefferson/dataguardian/main/data/screenshoot.png</image>
     </screenshot>
   </screenshots>
+  <icon type="stock">com.gnome.dataguardian</icon>
   <url type="homepage">https://geovanejefferson.github.io/dataguardian/</url>
-  <url type="bugtracker">https://github.com/GeovaneJefferson/dataguardian/issues</url>
   <url type="donation">https://www.patreon.com/GeovaneJefferson</url>
-
-  <provides>
-    <binary>dataguardian</binary>
-  </provides>
-
-  <categories>
-    <category>Utility</category>
-    <category>System</category>
-  </categories>
-
-  <keywords>
-    <keyword>backup</keyword>
-    <keyword>restore</keyword>
-    <keyword>files</keyword>
-    <keyword>synchronization</keyword>
-    <keyword>versioning</keyword>
-    <keyword>automation</keyword>
-    <keyword>linux</keyword>
-    <keyword>gtk</keyword>
-    <keyword>libadwaita</keyword>
-  </keywords>
-
-  <releases>
-    <release version="0.1 dev" date="2024-07-20">
-      <description>
-        <p>Initial development release. Under active development, use with caution.</p>
-      </description>
-    </release>
-  </releases>
-
-  <content_rating />
-
+  <developer_name>Geovane Jefferson</developer_name>
 </component>
