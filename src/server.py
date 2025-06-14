@@ -858,6 +858,58 @@ class SERVER:
 		console_handler.setFormatter(formatter)
 		logging.getLogger().addHandler(console_handler)
 
+	def find_missing_files_from_snapshot(self, snapshot_base_path: str) -> list:
+		"""
+		Identifies files present in a given backup snapshot but missing from the live user home.
+		Args:
+			snapshot_base_path (str): The absolute path to the root of the backup snapshot
+									  (e.g., /path/to/driver/app_name/backups/.main_backup
+									   or /path/to/driver/app_name/backups/DATE/TIME).
+		Returns:
+			list: A list of dictionaries, each representing a missing file with keys:
+				  'name' (str): Basename of the file.
+				  'path' (str): Absolute path to the file in the backup (for UI display).
+				  'original_path' (str): Expected absolute path on the live system.
+				  'relative_path_to_home' (str): Path relative to USER_HOME.
+				  'date' (float): Modification timestamp of the file in backup.
+				  'status' (str): A string indicating the file's status (e.g., "Missing from system").
+		"""
+		missing_files = []
+		if not os.path.isdir(snapshot_base_path):
+			logging.error(f"Snapshot path does not exist or is not a directory: {snapshot_base_path}")
+			return missing_files
+
+		logging.info(f"Scanning snapshot: {snapshot_base_path} for files missing from live system ({self.USER_HOME}).")
+
+		for root, _, files_in_dir in os.walk(snapshot_base_path):
+			for file_name in files_in_dir:
+				# Skip application-specific metadata files
+				if file_name == self.SUMMARY_FILENAME or file_name == ".backup_meta.json":
+					continue
+
+				full_backup_path = os.path.join(root, file_name)
+				
+				# Path of the file relative to the root of the snapshot being scanned.
+				# This relative path directly corresponds to the path relative to USER_HOME.
+				relative_path_to_home = os.path.relpath(full_backup_path, snapshot_base_path)
+				
+				original_system_path = os.path.join(self.USER_HOME, relative_path_to_home)
+
+				if not os.path.exists(original_system_path) and not os.path.islink(original_system_path):
+					try:
+						backup_file_mtime = os.path.getmtime(full_backup_path)
+						missing_files.append({
+							"name": file_name,
+							"path": full_backup_path, # Path in backup, for populate_results
+							"original_path": original_system_path,
+							"relative_path_to_home": relative_path_to_home,
+							"date": backup_file_mtime,
+							"status": "Missing from system"
+						})
+					except Exception as e:
+						logging.error(f"Error processing {full_backup_path} for missing check: {e}")
+		logging.info(f"Found {len(missing_files)} files in snapshot {snapshot_base_path} missing from live system.")
+		return missing_files
 
 if __name__ == "__main__":
 	pass

@@ -3040,12 +3040,12 @@ class SettingsWindow(Adw.PreferencesWindow):
             try:
                 os.kill(pid, signal.SIGTERM)  # Send termination signal
                 # os.waitpid(pid, 0)  # Wait for the process to terminate - can block UI
-                if os.path.exists(server.DAEMON_PID_LOCATION): # Check again before removing
-                    os.remove(server.DAEMON_PID_LOCATION)
+                # PID file will be removed by the daemon itself upon clean exit.
                 print(f"Daemon with PID {pid} signaled to stop.")
             except OSError as e:
                 logging.info(f"[CRTITICAL]: Failed to stop daemon. {pid}, Error: {e}")
                 if e.errno == errno.ESRCH: # No such process
+                    # If process doesn't exist, the PID file is stale and can be removed.
                     if os.path.exists(server.DAEMON_PID_LOCATION):
                         os.remove(server.DAEMON_PID_LOCATION)
         else:

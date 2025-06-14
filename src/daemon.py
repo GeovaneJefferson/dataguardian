@@ -823,6 +823,10 @@ if __name__ == "__main__":
     # Ensure the directory for the log file exists, attempt to create if not.
     # This is important if DRIVER_LOCATION is initially unavailable.
     log_file_path = server.get_log_file_path()
+    # This path should be determined before the daemon object 'daemon' is created or fails
+    pid_file_path_for_cleanup = server.DAEMON_PID_LOCATION
+    daemon_obj = None # Initialize to None
+    current_process_pid = str(os.getpid()) # Get PID early
     # if os.path.exists(log_file_path): # Optional: remove old log on start
     #     os.remove(log_file_path)
     os.makedirs(os.path.dirname(log_file_path), exist_ok=True) 
@@ -842,9 +846,41 @@ if __name__ == "__main__":
     setproctitle.setproctitle(f'{server.APP_NAME} - daemon')
 
     try:
-        daemon = Daemon()
-        asyncio.run(daemon.run())
+        daemon_obj = Daemon() # daemon_obj.pid will be set inside daemon_obj.run()
+        asyncio.run(daemon_obj.run())
+    except SystemExit: # Handle cases where daemon exits cleanly via sys.exit()
+        logging.info("Daemon received SystemExit.")
+    except KeyboardInterrupt: # Handle Ctrl+C
+        logging.info("Daemon interrupted by user (KeyboardInterrupt).")
     except Exception as e:
-        logging.error(f"[CRITICAL]: Daemon exception: {e}")
+        logging.critical(f"Unhandled exception in daemon's main execution block: {e}", exc_info=True)
     finally:
-        logging.info("Daemon shutting down.")
+        logging.info("Daemon shutting down (finally block reached).")
+
+        # Daemon removes its own PID file
+        if os.path.exists(pid_file_path_for_cleanup):
+            try:
+                pid_in_file = ""
+                with open(pid_file_path_for_cleanup, 'r') as f:
+                    pid_in_file = f.read().strip()
+
+                expected_pid = daemon_obj.pid if daemon_obj and hasattr(daemon_obj, 'pid') and daemon_obj.pid else current_process_pid
+
+                if pid_in_file == expected_pid:
+                    os.remove(pid_file_path_for_cleanup)
+                    logging.info(f"Daemon (PID {expected_pid}) removed its PID file: {pid_file_path_for_cleanup}")
+                else:
+                    logging.warning(
+                        f"PID file {pid_file_path_for_cleanup} contains PID {pid_in_file}, "
+                        f"but expected PID {expected_pid}. Not removing file."
+                    )
+            except Exception as e_remove:
+                logging.error(f"Error removing PID file {pid_file_path_for_cleanup} on daemon exit: {e_remove}")
+        else:
+            logging.info(f"PID file {pid_file_path_for_cleanup} not found during daemon shutdown.")
+
+        # Executor shutdown
+        if daemon_obj and hasattr(daemon_obj, 'executor') and daemon_obj.executor:
+            logging.info("Shutting down executor pool...")
+            daemon_obj.executor.shutdown(wait=True)
+            logging.info("Executor pool shut down.")
