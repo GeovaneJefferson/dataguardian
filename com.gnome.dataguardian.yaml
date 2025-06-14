@@ -32,12 +32,12 @@ modules:
   - name: dataguardian
     buildsystem: simple
     sources:
-      # - type: git
-      #   url: https://github.com/GeovaneJefferson/dataguardian.git
-      #   branch: main
+      - type: git
+        url: https://github.com/GeovaneJefferson/dataguardian.git
+        branch: main
 
-      - type: dir
-        path: . # Use local project directory
+      # - type: dir
+      #   path: . # Use local project directory
 
       - type: file
         path: com.gnome.dataguardian.metainfo.xml
