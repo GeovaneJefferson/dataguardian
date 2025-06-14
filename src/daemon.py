@@ -1,6 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
 from has_driver_connection import has_driver_connection
-import sys # For sys.exit
 from server import *
 
 WAIT_TIME = 5  # Minutes between backup checks
@@ -16,13 +15,15 @@ def send_to_ui(message: str):
         sock.sendall(message.encode("utf-8"))
         sock.close()
     except socket.timeout:
-        logging.warning("send_to_ui: Socket operation timed out.")
+        logging.warning(f"send_to_ui: Socket operation timed out for {server.SOCKET_PATH}.")
+    except FileNotFoundError:
+        logging.debug(f"send_to_ui: Socket file not found at {server.SOCKET_PATH}. UI likely not running or socket not created yet.")
     except ConnectionRefusedError:
         # This is common if UI is not running, can be debug level if too noisy
-        logging.debug("send_to_ui: Connection refused. UI likely not running.")
+        logging.debug(f"send_to_ui: Connection refused at {server.SOCKET_PATH}. UI likely not running or not listening.")
     except Exception as e:
         # Log other unexpected errors during UI communication
-        logging.warning(f"send_to_ui: Error communicating with UI: {e}")
+        logging.warning(f"send_to_ui: Error communicating with UI via {server.SOCKET_PATH}: {e}")
 
 class DownloadsEventHandler(FileSystemEventHandler):
     def __init__(self, daemon_instance):
