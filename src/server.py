@@ -234,38 +234,57 @@ class SERVER:
 
 	def is_daemon_running(self):
 		"""Check if the daemon is already running by checking the PID in the Flatpak sandbox."""
-		if os.path.exists(self.DAEMON_PID_LOCATION):
-			try:
-				with open(self.DAEMON_PID_LOCATION, 'r') as f:
-					pid = int(f.read().strip())
-
-				# Check if the process exists in the Flatpak sandbox
-				try:
-					os.kill(pid, 0)  # Sending signal 0 does not kill the process; it checks if it exists
-					# logging.info(f"Daemon is running with PID: {pid}")
-					logging.info(f"Daemon is running with PID: {pid}") # It's good to log this
-					return True
-				except OSError as e_oskill: # Capture the exception
-					if e_oskill.errno == errno.ESRCH: # ESRCH: No such process
-						logging.warning(f"Process with PID {pid} is not running (ESRCH). Removing stale PID file.")
-						try:
-							os.remove(self.DAEMON_PID_LOCATION)
-							logging.info(f"Removed stale PID file: {self.DAEMON_PID_LOCATION}")
-						except OSError as e_remove:
-							logging.error(f"Failed to remove stale PID file {self.DAEMON_PID_LOCATION} for PID {pid}: {e_remove}")
-					else:
-						# For other OSErrors (e.g., EPERM), the process might still be running.
-						# Do not remove the PID file. Log the error.
-						logging.error(f"Error checking process PID {pid} with os.kill(pid, 0): {e_oskill}. PID file not removed. Assuming daemon might still be running or inaccessible.")
-					# Return False if os.kill failed for any OSError, as we can't confirm it's "running and accessible" by the UI.
-					return False
-
-			except (ValueError, FileNotFoundError) as e:
-				logging.error(f"Error reading PID file {self.DAEMON_PID_LOCATION}: {e}")
-				# If PID file is gone here, it's okay, means no daemon or already cleaned up
-				return False
-		else:
+		if not os.path.exists(self.DAEMON_PID_LOCATION):
 			logging.info(f"PID file {self.DAEMON_PID_LOCATION} does not exist. Daemon not running or PID file cleaned up.")
+			return False
+
+		try:
+			with open(self.DAEMON_PID_LOCATION, 'r') as f:
+				pid_str = f.read().strip()
+				if not pid_str:
+					logging.warning(f"PID file {self.DAEMON_PID_LOCATION} is empty. Assuming daemon not running.")
+					return False
+				pid = int(pid_str)
+		except (ValueError, FileNotFoundError) as e:
+			logging.error(f"Error reading PID from {self.DAEMON_PID_LOCATION}: {e}. Assuming daemon not running.")
+			return False
+		except Exception as e: # Catch any other unexpected error during file read
+			logging.error(f"Unexpected error reading PID file {self.DAEMON_PID_LOCATION}: {e}. Assuming daemon not running.")
+			return False
+
+		try:
+			if not psutil.pid_exists(pid):
+				logging.warning(f"Process with PID {pid} from {self.DAEMON_PID_LOCATION} does not exist. PID file may be stale.")
+				return False
+
+			p = psutil.Process(pid)
+			cmdline = p.cmdline()
+			if not cmdline:
+				logging.warning(f"Could not retrieve command line for PID {pid}. Cannot definitively verify daemon identity. Assuming running based on PID existence.")
+				return True
+
+			daemon_script_name = os.path.basename(self.DAEMON_PY_LOCATION)
+			is_our_daemon = False
+			for arg in cmdline:
+				if self.DAEMON_PY_LOCATION in arg or daemon_script_name in arg:
+					is_our_daemon = True
+					break
+			
+			if is_our_daemon:
+				logging.info(f"Daemon is running with PID: {pid} and verified command line.")
+				return True
+			else:
+				logging.warning(f"Process with PID {pid} exists, but its command line {cmdline} does not match expected daemon script '{daemon_script_name}'. PID file may be stale or belong to another process.")
+				return False
+
+		except psutil.NoSuchProcess:
+			logging.warning(f"Process with PID {pid} from {self.DAEMON_PID_LOCATION} vanished (NoSuchProcess). PID file may be stale.")
+			return False
+		except psutil.AccessDenied:
+			logging.error(f"Access denied when trying to inspect process with PID {pid}. Cannot verify daemon identity. Assuming running based on PID existence.")
+			return True
+		except Exception as e:
+			logging.error(f"Unexpected error checking process PID {pid} with psutil: {e}. Assuming not running for safety.")
 			return False
 	
 	def is_first_backup(self) -> bool:

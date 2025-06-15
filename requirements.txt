@@ -1,4 +1,3 @@
-watchdog
 setproctitle
 psutil
 PyGObject
