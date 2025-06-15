@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from has_driver_connection import has_driver_connection
+import re # Added for package name parsing
 from server import *
 
 WAIT_TIME = 5  # Minutes between backup checks
@@ -24,34 +25,6 @@ def send_to_ui(message: str):
     except Exception as e:
         # Log other unexpected errors during UI communication
         logging.warning(f"send_to_ui: Error communicating with UI via {server.SOCKET_PATH}: {e}")
-
-class DownloadsEventHandler(FileSystemEventHandler):
-    def __init__(self, daemon_instance):
-        super().__init__()
-        self.daemon = daemon_instance
-        # Ensure user_home is correctly referenced from the daemon instance
-        self.downloads_path = os.path.join(self.daemon.user_home, "Downloads")
-
-    def on_created(self, event):
-        if event.is_directory:
-            return
-
-        src_path = event.src_path
-        # Check if the event is within the Downloads folder
-        # and not a subdirectory (recursive=False for observer)
-        if os.path.dirname(src_path) != self.downloads_path:
-            return
-
-        filename = os.path.basename(src_path)
-        if filename.endswith((".deb", ".rpm")):
-            logging.info(f"Watchdog: Detected new package in Downloads: {src_path}")
-            if hasattr(self.daemon, 'loop') and self.daemon.loop.is_running():
-                asyncio.run_coroutine_threadsafe(
-                    self.daemon._handle_downloaded_package(src_path),
-                    self.daemon.loop
-                )
-            else:
-                logging.warning("Daemon event loop not available for handling downloaded package from watchdog.")
 
 class Daemon:
     ############################################################################
@@ -78,7 +51,6 @@ class Daemon:
         self.suspend_flag = False
         self.should_exit = False
         self.had_writability_issue = False # Tracks if a writability issue was logged
-        self.downloads_observer = None # For watchdog
 
     def _update_copy_concurrency(self):  # NONSONAR
         """Determine and update copy concurrency based on CPU cores and current load."""
@@ -91,16 +63,16 @@ class Daemon:
 
             if cpu_load > HIGH_CPU_THRESHOLD:
                 new_concurrency = LOW_CONCURRENCY_ON_HIGH_LOAD
-                logging.info(
-                    f"High CPU load ({cpu_load}%) detected. "
-                    f"Setting COPY_CONCURRENCY to a conservative {new_concurrency}."
-                )
+                # logging.info(
+                #     f"High CPU load ({cpu_load}%) detected. "
+                #     f"Setting COPY_CONCURRENCY to a conservative {new_concurrency}."
+                # )
             else:
                 new_concurrency = max(1, min(cpu_cores if cpu_cores else DEFAULT_COPY_CONCURRENCY, 8))
-                logging.info(
-                    f"CPU load ({cpu_load}%) is moderate. "
-                    f"Setting COPY_CONCURRENCY to {new_concurrency} based on {cpu_cores or 'default'} CPU cores."
-                )
+                # logging.info(
+                #     f"CPU load ({cpu_load}%) is moderate. "
+                #     f"Setting COPY_CONCURRENCY to {new_concurrency} based on {cpu_cores or 'default'} CPU cores."
+                # )
         except Exception as e:
             logging.warning(
                 f"Could not determine CPU cores/load, defaulting COPY_CONCURRENCY to {DEFAULT_COPY_CONCURRENCY}. Error: {e}"
@@ -127,9 +99,6 @@ class Daemon:
         elif signum in (signal.SIGTERM, signal.SIGINT):
             logging.info(f"Received termination signal {signum}, stopping daemon...")
             # self.suspend_flag = True # Not strictly needed if exiting
-            if self.downloads_observer and self.downloads_observer.is_alive():
-                self.downloads_observer.stop()
-                # self.downloads_observer.join() # Join in cleanup or finally
             self.should_exit = True
 
     def _compute_folder_metadata(self, folder_path, excluded_dirs=None, excluded_exts=None):
@@ -421,22 +390,6 @@ class Daemon:
         except Exception as e:
             logging.error(f"[CRITICAL]: Error backing up downloaded package {src_path} to {dest_path}: {e}")
 
-    async def _handle_downloaded_package(self, src_path: str):
-        """Handles a .deb or .rpm file detected in the Downloads folder."""
-        if not os.path.isfile(src_path): # Ensure it's a file and still exists
-            return
-
-        filename = os.path.basename(src_path)
-        dest_folder = None
-        if filename.endswith(".deb"): dest_folder = server.deb_main_folder()
-        elif filename.endswith(".rpm"): dest_folder = server.rpm_main_folder()
-
-        if dest_folder and server.DRIVER_LOCATION and self.is_backup_location_writable():
-            await self._backup_package_file(src_path, dest_folder)
-        elif not dest_folder: logging.debug(f"File {filename} is not a .deb or .rpm package. Ignoring.")
-        elif not server.DRIVER_LOCATION: logging.warning(f"Backup driver location not set. Cannot backup {filename}.")
-        elif not self.is_backup_location_writable(): logging.warning(f"Backup location not writable. Cannot backup {filename}.")
-
     ############################################################################
     # FOLDER METADATA HANDLING
     ############################################################################
@@ -479,6 +432,70 @@ class Daemon:
                 return True
         return False
     
+    def _get_package_info(self, filename: str) -> tuple[str | None, str | None, str | None]:
+        """
+        Extracts the base name, version/architecture string, and extension from a package filename.
+        Returns (base_name, version_arch_part, extension) or (None, None, None) if not a package.
+        - base_name: The name of the package without version/arch info.
+        - version_arch_part: The part of the filename typically containing version and architecture.
+                             Includes the leading separator (_ or -). Is empty if no version detected.
+        - extension: .deb or .rpm
+        """
+        name_root, ext = os.path.splitext(filename)
+        if ext not in [".deb", ".rpm"]:
+            return None, None, None
+
+        # Heuristic: find the first hyphen or underscore followed by a digit.
+        # Example: 'code_1.2.3-amd64' -> base='code', version_arch='_1.2.3-amd64'
+        # Example: 'mypkg-1.0' -> base='mypkg', version_arch='-1.0'
+        match = re.search(r"(_|-)(?=\d)", name_root)
+        if match:
+            split_index = match.start()
+            base_name = name_root[:split_index]
+            version_arch_part = name_root[split_index:] 
+            return base_name, version_arch_part, ext
+        else:
+            # If no version-like pattern is found, consider the whole name (without ext) as base_name.
+            return name_root, "", ext
+        
+    ############################################################################
+    # DOWNLOADED PACKAGES BACKUP
+    ############################################################################
+    async def _backup_downloaded_packages(self):
+        """Scans ~/Downloads for .deb/.rpm packages and backs them up if new."""
+        logging.info("Starting scan of Downloads for new packages...")
+        downloads_path = os.path.join(self.user_home, "Downloads")
+        if not os.path.isdir(downloads_path):
+            logging.warning(f"Downloads folder not found at {downloads_path}. Skipping package backup.")
+            return
+
+        if not server.DRIVER_LOCATION or not self.is_backup_location_writable():
+            logging.warning("Backup driver not connected or not writable. Skipping package backup.")
+            return
+
+        package_backup_tasks = []
+        for item_name in os.listdir(downloads_path):
+            item_path = os.path.join(downloads_path, item_name)
+            if os.path.isfile(item_path):
+                dest_folder = None
+                if item_name.endswith(".deb"):
+                    dest_folder = server.deb_main_folder()
+                elif item_name.endswith(".rpm"):
+                    dest_folder = server.rpm_main_folder()
+
+                if dest_folder:
+                    # Check if package with the same name already exists in backup
+                    backed_up_package_path = os.path.join(dest_folder, item_name)
+                    if not os.path.exists(backed_up_package_path):
+                        logging.info(f"New package found in Downloads: {item_name}. Queuing for backup.")
+                        package_backup_tasks.append(self._backup_package_file(item_path, dest_folder))
+        
+        if package_backup_tasks:
+            await asyncio.gather(*package_backup_tasks)
+            logging.info(f"Finished backing up {len(package_backup_tasks)} new package(s) from Downloads.")
+        else:
+            logging.info("No new packages found in Downloads to backup.")
+            
     ############################################################################
     # MAIN BACKUP PROCESS
     ############################################################################
@@ -639,6 +656,10 @@ class Daemon:
             except Exception as e: # Catch other potential errors like FileNotFoundError for the script itself
                 logging.error(f"[CRITICAL]: Failed to generate backup summary (unexpected error): {e}", exc_info=True)
             logging.info("Backup session complete.")
+
+            # After main backup and summary, backup downloaded packages
+            if not (self.should_exit or self.suspend_flag):
+                await self._backup_downloaded_packages()
         
         try:
             if os.path.exists(self.interruped_main_file):
@@ -742,17 +763,6 @@ class Daemon:
 
         logging.info("Starting scan and backup...")
 
-        # Start Downloads watchdog observer
-        downloads_path = os.path.join(self.user_home, "Downloads")
-        if os.path.exists(downloads_path):
-            event_handler = DownloadsEventHandler(self)
-            self.downloads_observer = Observer()
-            self.downloads_observer.schedule(event_handler, downloads_path, recursive=False)
-            self.downloads_observer.start()
-            logging.info(f"Started watchdog for Downloads folder: {downloads_path}")
-        else:
-            logging.warning(f"Downloads folder not found: {downloads_path}. Watchdog not started.")
-
         while not self.should_exit:
             if self.suspend_flag:
                 logging.info("Daemon suspended... sleeping.")
@@ -805,10 +815,6 @@ class Daemon:
                 self.signal_handler(signal.SIGTERM, None) # Trigger shutdown
                 # self.should_exit will be true now, loop will terminate
 
-        # Cleanup observer
-        if self.downloads_observer and self.downloads_observer.is_alive():
-            self.downloads_observer.stop()
-            self.downloads_observer.join()
         # Executor shutdown is handled in the main script's finally block
         # if self.executor:
         #    self.executor.shutdown(wait=True) 

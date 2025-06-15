@@ -66,8 +66,8 @@ def generate_summary():
                         category_stats[category]["count"] += 1
                         category_stats[category]["size"] += os.path.getsize(file_path)
                         files_processed_count += 1
-                        if files_processed_count % 2000 == 0: # Log progress
-                            logging.info(f"Processed {files_processed_count} files for main backup summary (current: {file_path})...")
+                        # if files_processed_count % 2000 == 0: # Log progress
+                        #     logging.info(f"Processed {files_processed_count} files for main backup summary (current: {file_path})...")
                 except FileNotFoundError:
                     logging.warning(f"File not found during summary generation (main): {file_path}")
                     continue
@@ -79,7 +79,7 @@ def generate_summary():
         with open(summary_output_path, 'w') as f:
             json.dump({"categories": [], "most_frequent_backups": [], "most_frequent_recent_backups": [], "error": f"Error during summary generation: {e_walk}"}, f, indent=4)
         raise # Re-raise to ensure the calling process (daemon) knows it failed
-    logging.info(f"Finished walk in {main_backup_path} for category stats. Total files processed: {files_processed_count}")
+    # logging.info(f"Finished walk in {main_backup_path} for category stats. Total files processed: {files_processed_count}")
 
     # --- Calculate Most Frequent Backups from Incremental Backups ---
     file_backup_counts = {}
@@ -127,9 +127,9 @@ def generate_summary():
                             recent_file_backup_counts[original_rel_path] = recent_file_backup_counts.get(original_rel_path, 0) + 1
                         
                         incremental_files_processed_count +=1
-                        if incremental_files_processed_count % 2000 == 0: # Log progress
-                            logging.info(f"Processed {incremental_files_processed_count} files for incremental summary (current: {os.path.join(root_inc, filename_loop)})...")
-        logging.info(f"Finished walk in {backup_root} for incremental backup stats. Total files processed: {incremental_files_processed_count}")
+                        # if incremental_files_processed_count % 2000 == 0: # Log progress
+                        #     logging.info(f"Processed {incremental_files_processed_count} files for incremental summary (current: {os.path.join(root_inc, filename_loop)})...")
+        # logging.info(f"Finished walk in {backup_root} for incremental backup stats. Total files processed: {incremental_files_processed_count}")
 
 
     # Sort files by backup count in descending order and select top N

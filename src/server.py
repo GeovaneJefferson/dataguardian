@@ -37,9 +37,6 @@ import math
 
 
 from datetime import datetime, timedelta
-from pathlib import Path
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
@@ -118,7 +115,7 @@ class SERVER:
 		################################################################################
 		# HOME SYSTEM LOCATIONS
 		################################################################################
-		self.HOME_USER: str = Path.home()
+		self.HOME_USER: str = os.path.expanduser("~") # Path.home() is equivalent to os.path.expanduser("~")
 		self.USERNAME = getpass.getuser()
 		self.GET_HOME_FOLDERS: str = os.listdir(self.HOME_USER)
 		self.GET_CURRENT_LOCATION = pathlib.Path().resolve()
@@ -134,7 +131,7 @@ class SERVER:
 		# LOCATIONS
 		################################################################################
 		self.CONF = configparser.ConfigParser()
-		self.CONF_LOCATION: str = os.path.join(Path.home(), '.var', 'app', self.ID, 'config', 'config.conf')
+		self.CONF_LOCATION: str = os.path.join(os.path.expanduser("~"), '.var', 'app', self.ID, 'config', 'config.conf')
 		self.autostart_file: str = os.path.expanduser(f"~/.config/autostart/{self.APP_NAME.lower()}_autostart.desktop")
 
 		if not os.path.exists(self.CONF_LOCATION):
@@ -168,7 +165,7 @@ class SERVER:
 		
 		# Flatpak
 		self.DAEMON_PY_LOCATION: str = os.path.join('/app/share/dataguardian/src', 'daemon.py')
-		self.DAEMON_PID_LOCATION: str = os.path.join(Path.home(), '.var', 'app', self.ID, 'config', 'daemon.pid')
+		self.DAEMON_PID_LOCATION: str = os.path.join(os.path.expanduser("~"), '.var', 'app', self.ID, 'config', 'daemon.pid')
         
 		self.CACHE = {}
 		self.cache_file = os.path.join(self.backup_folder_name(), ".cache.json")
@@ -246,18 +243,29 @@ class SERVER:
 				try:
 					os.kill(pid, 0)  # Sending signal 0 does not kill the process; it checks if it exists
 					# logging.info(f"Daemon is running with PID: {pid}")
+					logging.info(f"Daemon is running with PID: {pid}") # It's good to log this
 					return True
-				except OSError:
-					# logging.warning(f"Process with PID {pid} is not running.")
-					os.remove(self.DAEMON_PID_LOCATION)
-					# logging.info(f"Removed stale PID file: {self.DAEMON_PID_LOCATION}")
+				except OSError as e_oskill: # Capture the exception
+					if e_oskill.errno == errno.ESRCH: # ESRCH: No such process
+						logging.warning(f"Process with PID {pid} is not running (ESRCH). Removing stale PID file.")
+						try:
+							os.remove(self.DAEMON_PID_LOCATION)
+							logging.info(f"Removed stale PID file: {self.DAEMON_PID_LOCATION}")
+						except OSError as e_remove:
+							logging.error(f"Failed to remove stale PID file {self.DAEMON_PID_LOCATION} for PID {pid}: {e_remove}")
+					else:
+						# For other OSErrors (e.g., EPERM), the process might still be running.
+						# Do not remove the PID file. Log the error.
+						logging.error(f"Error checking process PID {pid} with os.kill(pid, 0): {e_oskill}. PID file not removed. Assuming daemon might still be running or inaccessible.")
+					# Return False if os.kill failed for any OSError, as we can't confirm it's "running and accessible" by the UI.
 					return False
 
 			except (ValueError, FileNotFoundError) as e:
-				# logging.error(f"Error reading PID file: {e}")
+				logging.error(f"Error reading PID file {self.DAEMON_PID_LOCATION}: {e}")
+				# If PID file is gone here, it's okay, means no daemon or already cleaned up
 				return False
 		else:
-			# logging.info(f"PID file {server.DAEMON_PID_LOCATION} does not exist.")
+			logging.info(f"PID file {self.DAEMON_PID_LOCATION} does not exist. Daemon not running or PID file cleaned up.")
 			return False
 	
 	def is_first_backup(self) -> bool:
