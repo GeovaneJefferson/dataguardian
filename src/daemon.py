@@ -35,6 +35,7 @@ class Daemon:
         self.copy_concurrency = DEFAULT_COPY_CONCURRENCY # Initialize with default
         self.executor = None # Initialize before first use in _update_copy_concurrency
         self.copy_semaphore = None # Initialize before first use in _update_copy_concurrency
+        self.loop = None # To store the event loop for threadsafe calls
 
         self.user_home = server.USER_HOME
         self.excluded_dirs = {'__pycache__', 'snap'}
@@ -91,25 +92,37 @@ class Daemon:
     ############################################################################
     # SIGNAL HANDLING
     ############################################################################
+    async def _send_ui_message_threadsafe(self, message_type: str):
+        """Helper to send a status message to UI from a potentially different thread."""
+        # This method is called via run_coroutine_threadsafe, so it runs in the event loop.
+        try:
+            message = {"type": message_type}
+            send_to_ui(json.dumps(message)) # send_to_ui is synchronous
+            logging.info(f"Sent '{message_type}' message to UI.")
+        except Exception as e:
+            logging.error(f"Error sending '{message_type}' to UI via _send_ui_message_threadsafe: {e}")
+
     def signal_handler(self, signum, frame):
         if signum == signal.SIGTSTP:
             logging.info(f"Received SIGTSTP (suspend), pausing daemon...")
             self.suspend_flag = True
-            # Do NOT set self.should_exit = True for SIGTSTP
+            if self.loop and self.loop.is_running():
+                asyncio.run_coroutine_threadsafe(self._send_ui_message_threadsafe("daemon_suspended"), self.loop)
         elif signum in (signal.SIGTERM, signal.SIGINT):
             logging.info(f"Received termination signal {signum}, stopping daemon...")
-            # self.suspend_flag = True # Not strictly needed if exiting
             self.should_exit = True
+            if self.loop and self.loop.is_running():
+                asyncio.run_coroutine_threadsafe(self._send_ui_message_threadsafe("daemon_stopping"), self.loop)
 
     def _compute_folder_metadata(self, folder_path, excluded_dirs=None, excluded_exts=None):
         """Compute total size, file count, and latest modification time for a folder."""
         total_size = 0
         latest_mtime = 0
         total_files = 0
-
+    
         excluded_dirs = excluded_dirs or set()
         excluded_exts = excluded_exts or set()
-
+    
         for root, dirs, files in os.walk(folder_path):
             if self.should_exit or self.suspend_flag:
                 logging.debug(f"_compute_folder_metadata: Exiting or suspending during walk of {folder_path}.")
@@ -138,6 +151,8 @@ class Daemon:
     def resume_handler(self, signum, frame):
         logging.info(f"Received resume signal {signum}, resuming operations.")
         self.suspend_flag = False
+        if self.loop and self.loop.is_running():
+            asyncio.run_coroutine_threadsafe(self._send_ui_message_threadsafe("daemon_resumed"), self.loop)
 
     ############################################################################
     # BACKUP LOCATION AND PERMISSIONS

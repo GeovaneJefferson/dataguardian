@@ -27,7 +27,7 @@ def _get_file_category(filename):
     return "Others"
 
 def generate_summary():
-    logging.info("Generating backup summary...")
+    # logging.info("Generating backup summary...")
     backup_root = server.backup_folder_name()
     summary_output_path: str = server.get_summary_filename()
 
@@ -88,7 +88,7 @@ def generate_summary():
     main_backup_folder_name = os.path.basename(main_backup_path)
 
     if os.path.exists(backup_root):
-        logging.info(f"Starting walk in incremental backup root: {backup_root} for frequency stats.")
+        # logging.info(f"Starting walk in incremental backup root: {backup_root} for frequency stats.")
         incremental_files_processed_count = 0
         for date_folder_name in os.listdir(backup_root):
             date_folder_path = os.path.join(backup_root, date_folder_name)
