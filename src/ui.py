@@ -2947,23 +2947,46 @@ class SettingsWindow(Adw.PreferencesWindow):
 
     def stop_daemon(self):
         """Stop the daemon by reading its PID."""
-        if os.path.exists(server.DAEMON_PID_LOCATION):
-            with open(server.DAEMON_PID_LOCATION, 'r') as f:
-                pid = int(f.read())
+        pid_file_path = server.DAEMON_PID_LOCATION
+        if os.path.exists(pid_file_path):
+            pid_str = None
+            pid = None
+            try:
+                with open(pid_file_path, 'r') as f:
+                    pid_str = f.read().strip()
+                if not pid_str:
+                    logging.warning(f"Daemon PID file {pid_file_path} is empty. Removing stale file.")
+                    os.remove(pid_file_path)
+                    return # Nothing to stop
+                pid = int(pid_str)
+            except ValueError:
+                logging.error(f"Invalid PID '{pid_str}' in {pid_file_path}. Removing stale file.")
+                try:
+                    os.remove(pid_file_path)
+                except OSError as e_rem:
+                    logging.error(f"Failed to remove stale/invalid PID file {pid_file_path}: {e_rem}")
+                return # Cannot stop if PID is invalid
+            except OSError as e_read: # Error reading or removing file
+                logging.error(f"Error accessing PID file {pid_file_path}: {e_read}")
+                return # Cannot proceed
 
             try:
                 os.kill(pid, signal.SIGTERM)  # Send termination signal
-                # os.waitpid(pid, 0)  # Wait for the process to terminate - can block UI
-                # PID file will be removed by the daemon itself upon clean exit.
-                print(f"Daemon with PID {pid} signaled to stop.")
+                logging.info(f"Daemon with PID {pid} signaled to stop.")
+                # Daemon is responsible for removing its PID file on clean shutdown.
             except OSError as e:
-                logging.info(f"[CRTITICAL]: Failed to stop daemon. {pid}, Error: {e}")
+                # Log level changed to warning for ESRCH as it's a common "stale PID" scenario
                 if e.errno == errno.ESRCH: # No such process
-                    # If process doesn't exist, the PID file is stale and can be removed.
-                    if os.path.exists(server.DAEMON_PID_LOCATION):
-                        os.remove(server.DAEMON_PID_LOCATION)
+                    logging.warning(f"Daemon process with PID {pid} not found (ESRCH). PID file {pid_file_path} is stale, removing.")
+                    try:
+                        if os.path.exists(pid_file_path): # Check again before removing
+                           os.remove(pid_file_path)
+                    except OSError as e_rem_stale:
+                        logging.error(f"Failed to remove stale PID file {pid_file_path} after ESRCH: {e_rem_stale}")
+                else: # Other OS errors during kill
+                    logging.error(f"[CRITICAL]: Failed to stop daemon PID {pid}. Error: {e}") # Corrected typo
         else:
-            print("Daemon is not running (no PID file).")
+            logging.info("Daemon is not running (no PID file).")
 
     def remove_autostart_entry(self):
         autostart_file_path = os.path.expanduser(f"~/.config/autostart/{server.APP_NAME_CLOSE_LOWER}_autostart.desktop")
@@ -2977,8 +3000,6 @@ class SettingsWindow(Adw.PreferencesWindow):
                 option='automatically_backup',
                 value='false'
             )
-
-
     def create_folder_row(self, folder_name):
         """Create a row for folders with a trash icon."""
         row = Adw.ActionRow(title=folder_name)
