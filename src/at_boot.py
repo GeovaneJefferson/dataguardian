@@ -40,19 +40,13 @@ def at_boot():
                 process = sub.Popen(
                     ['python3', daemon_script_path],
                     stdout=sub.PIPE,
-                    stderr=sub.PIPE
+                    stderr=sub.PIPE,
+                    start_new_session=True # Ensure daemon runs independently
                 )
+                logging.info(f"Daemon process started with PID: {process.pid}. Daemon will manage its own PID file.")
             except Exception as e:
                 logging.error(f"Error starting daemon: {e}")
                 return
-
-            # Write the daemon's PID to the PID file
-            try:
-                with open(server.DAEMON_PID_LOCATION, 'w') as f:
-                    f.write(str(process.pid))
-                logging.info(f"Daemon started with PID: {process.pid}")
-            except Exception as e:
-                logging.error(f"Error writing PID to file: {e}")
         else:
             logging.info("Daemon is already running, not starting again.")
     except Exception as e:
