@@ -158,6 +158,11 @@ class BackupWindow(Adw.ApplicationWindow):
         self.search_spinner = None # Initialize search spinner
         self.starred_files_flowbox = None # For the "Starred Items" section
         self.starred_files = [] # Use a list to maintain order for starred files
+
+        # Spinner for center content loading/searching
+        self.center_search_spinner = Gtk.Spinner()
+        self.center_search_spinner.set_spinning(False)
+        self.center_search_spinner.set_visible(True) # Spinner itself is visible, stack controls page
         self._load_starred_files_from_json() # Load starred files at startup, this method initializes self.starred_files
 
         # Get exclude hidden items setting from the server 
@@ -184,9 +189,11 @@ class BackupWindow(Adw.ApplicationWindow):
         self._populate_suggested_files() # Add this call
         self._populate_starred_files() # Add this call for starred items
         self._set_initial_daemon_state_and_update_icon()
-        self.populate_latest_backups()  # At startup populate with latest backups results
+        # self.populate_latest_backups() # This will be handled by scan_files_folder_threaded completion
         self._check_for_critical_log_errors() # Check for critical errors at startup
         # self.update_overview_cards_from_summary() # Load summary data for overview cards
+
+        # Initial population of results or spinner showing is handled by scan_files_folder_threaded
 
         threading.Thread(target=self.start_server, daemon=True).start()  # Start the socket server in a separate thread
 
@@ -286,12 +293,31 @@ class BackupWindow(Adw.ApplicationWindow):
         center_box.set_vexpand(True)
         center_box.set_css_classes(["center-panel"])
         center_box.set_name("center-box")
-        # filter_box = Gtk.Box(spacing=12)
-        # filetype_combo = Adw.ComboRow(title="File Type", model=["All", ".txt", ".pdf", ".jpg"])
-        # date_combo = Adw.ComboRow(title="Date Modified", model=["Any", "Today", "This Week", "This Month"])
-        # filter_box.append(filetype_combo)
-        # filter_box.append(date_combo)
-        # center_box.append(filter_box)
+
+        # Create a Gtk.Stack for the main content and the spinner
+        self.center_content_stack = Gtk.Stack()
+        self.center_content_stack.set_transition_type(Gtk.StackTransitionType.NONE) # No animation for spinner
+        center_box.append(self.center_content_stack)
+
+        # Page 1: Actual content
+        content_page_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        content_page_box.set_vexpand(True)
+        self.center_content_stack.add_named(content_page_box, "content_page")
+
+        # Page 2: Spinner
+        spinner_page_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        spinner_page_box.set_hexpand(True)
+        spinner_page_box.set_vexpand(True)
+        spinner_page_box.set_halign(Gtk.Align.CENTER)
+        spinner_page_box.set_valign(Gtk.Align.CENTER)
+        
+        # self.center_search_spinner is already initialized in __init__
+        self.center_search_spinner.set_size_request(64, 64) # Make it a bit larger
+        spinner_page_box.append(self.center_search_spinner)
+        self.center_content_stack.add_named(spinner_page_box, "spinner_page")
+
+        # Initially show the content page (or spinner if files are loading)
+        # self.center_content_stack.set_visible_child_name("content_page") # scan_files_folder_threaded will manage this
 
         # --- Suggested Files Section ---
         suggested_files_title_label = Gtk.Label(xalign=0)
@@ -299,20 +325,20 @@ class BackupWindow(Adw.ApplicationWindow):
         suggested_files_title_label.add_css_class("title-3")
         suggested_files_title_label.set_margin_top(12)
         suggested_files_title_label.set_margin_bottom(6)
-        center_box.append(suggested_files_title_label)
+        content_page_box.append(suggested_files_title_label)
 
         self.suggested_files_flowbox = Gtk.FlowBox()
         self.suggested_files_flowbox.set_valign(Gtk.Align.START)
         self.suggested_files_flowbox.set_max_children_per_line(5) # Adjust as needed
         self.suggested_files_flowbox.set_selection_mode(Gtk.SelectionMode.NONE)
         self.suggested_files_flowbox.set_margin_bottom(12) # Space before next section
-        center_box.append(self.suggested_files_flowbox)
+        content_page_box.append(self.suggested_files_flowbox)
 
         # --- Starred Files Section ---
         starred_files_header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         starred_files_header_box.set_margin_top(12) # Margin from suggested files
         starred_files_header_box.set_margin_bottom(6)
-        center_box.append(starred_files_header_box)
+        content_page_box.append(starred_files_header_box)
 
         starred_files_title_label = Gtk.Label(xalign=0)
         starred_files_title_label.set_text("Starred Files")
@@ -332,14 +358,14 @@ class BackupWindow(Adw.ApplicationWindow):
         self.starred_files_flowbox.set_max_children_per_line(5) # Consistent with suggested files
         self.starred_files_flowbox.set_selection_mode(Gtk.SelectionMode.NONE)
         self.starred_files_flowbox.set_margin_bottom(12) # Space before latest backups
-        center_box.append(self.starred_files_flowbox)
+        content_page_box.append(self.starred_files_flowbox)
 
         # --- Latest Backups/Search Resulst Section ---
         self.top_center_label = Gtk.Label(xalign=0)
         self.top_center_label.add_css_class("title-3") # Ensure .title-3 is styled in your CSS
         self.top_center_label.set_margin_top(0) # Space will be from previous section's bottom margin
         self.top_center_label.set_margin_bottom(12) # Space between title and listbox
-        center_box.append(self.top_center_label)
+        content_page_box.append(self.top_center_label)
 
         # Header grid
         left_column_titles = Gtk.Grid()
@@ -384,8 +410,20 @@ class BackupWindow(Adw.ApplicationWindow):
         self.listbox.connect("row-selected", self.on_listbox_selection_changed)
 
         scrolled_window.set_child(self.listbox) # Add ListBox to ScrolledWindow
-        center_box.append(scrolled_window) # Add ScrolledWindow to center_box
+        content_page_box.append(scrolled_window) # Add ScrolledWindow to content_page_box
         self.main_content.append(center_box)
+
+    def _show_center_spinner(self):
+        if self.center_content_stack.get_visible_child_name() != "spinner_page":
+            self.center_content_stack.set_visible_child_name("spinner_page")
+        if not self.center_search_spinner.get_spinning():
+            self.center_search_spinner.start()
+
+    def _hide_center_spinner(self):
+        if self.center_content_stack.get_visible_child_name() != "content_page":
+            self.center_content_stack.set_visible_child_name("content_page")
+        if self.center_search_spinner.get_spinning():
+            self.center_search_spinner.stop()
 
     def _create_detail_row(self, name, icon_name, color_hex, count_str, size_str):
         row = Gtk.ListBoxRow()
@@ -867,10 +905,14 @@ class BackupWindow(Adw.ApplicationWindow):
 
     def populate_latest_backups(self):
         self.top_center_label.set_text("Latest Backups Files")
+        GLib.idle_add(self._hide_center_spinner) # Ensure spinner is hidden when populating this
 
         # Show latest backup files on startup
         latest_files = self.get_latest_backup_files()
         if latest_files:
+            # If files were not loaded yet (e.g. initial state before scan completes)
+            # this ensures the spinner is hidden and content page is shown.
+            GLib.idle_add(self._hide_center_spinner)
             # Optionally, populate your listbox or UI with these files
             self.populate_results([{"name": os.path.basename(f), "path": f, "date": os.path.getmtime(f)} for f in latest_files])
         else:
@@ -1180,7 +1222,7 @@ class BackupWindow(Adw.ApplicationWindow):
             return file_path_clicked # Already the main backup path
 
         # Fallback: Attempt to convert if it's an incremental backup path
-        logging.warning(
+        logging.debug(
             f"_get_main_backup_equivalent_path called with an unexpected path: {file_path_clicked}. "
             f"Attempting to convert to main backup equivalent."
         )
@@ -1569,6 +1611,10 @@ class BackupWindow(Adw.ApplicationWindow):
     # SEARCH ENTRY
     ##########################################################################
     def scan_files_folder_threaded(self):
+        # Show spinner *before* starting the thread if files are not loaded
+        if not self.files_loaded:
+            GLib.idle_add(self._show_center_spinner)
+
         def scan():
             try:
                 self.files = self.scan_files_folder()
@@ -1583,17 +1629,26 @@ class BackupWindow(Adw.ApplicationWindow):
                 self.file_names_lower = []
                 self.file_search_display_paths_lower = []
                 self.files_loaded = False # Crucial: mark as not loaded
+                GLib.idle_add(self._hide_center_spinner) # Hide spinner on error
                 return # Stop further processing in this thread if scanning failed
 
             # If scan was successful and files are loaded, process any pending/last search
+            hide_spinner_after_scan = True
             if self.pending_search_query is not None:
                 GLib.idle_add(self.perform_search, self.pending_search_query)
                 self.pending_search_query = None
+                hide_spinner_after_scan = False # perform_search will hide it
             elif self.last_query:
                 GLib.idle_add(self.perform_search, self.last_query)
-            # Optional: If no pending/last query, populate with some default (e.g., all files sorted by date)
-            # else: # No search query, show all files (or latest)
-            #    GLib.idle_add(self.populate_results, sorted(self.files, key=lambda x: x["date"], reverse=True)[:self.page_size])
+                hide_spinner_after_scan = False # perform_search will hide it
+            else: # No search query, populate with latest backups as default
+                GLib.idle_add(self.populate_latest_backups)
+                # populate_latest_backups itself calls _hide_center_spinner if it populates results
+                # but to be safe, ensure it's hidden if it doesn't populate anything.
+                # However, populate_latest_backups calls populate_results which will hide it.
+
+            if hide_spinner_after_scan: # If no search took over, hide the initial scanning spinner
+                GLib.idle_add(self._hide_center_spinner)
 
         threading.Thread(target=scan, daemon=True).start()
     def scan_files_folder(self):
@@ -1627,25 +1682,32 @@ class BackupWindow(Adw.ApplicationWindow):
 
         if not self.files_loaded:
             self.pending_search_query = query
-            # print("Files not loaded yet, queuing search for:", query)
+            if query: # Only show spinner if there's a query and files are not loaded
+                GLib.idle_add(self._show_center_spinner)
+            else: # Query cleared, files not loaded, hide spinner
+                GLib.idle_add(self._hide_center_spinner)
             return
 
         if query:
+            GLib.idle_add(self._show_center_spinner) # Show spinner before starting search thread
             self.search_timer = Timer(0.5, 
                 lambda: threading.Thread(target=self.perform_search, args=(query,), 
                                         daemon=True).start())
             self.search_timer.start()
         else:
+            GLib.idle_add(self._hide_center_spinner) # Hide spinner if query is cleared
             # Show latest backup files from latest backup date
             self.populate_latest_backups()
 
     def perform_search(self, query):
         """Perform the search and update the results."""
+        # Spinner is typically shown by on_search_changed or if files were not loaded initially.
+        # If perform_search is called directly (e.g. after scan), ensure spinner is shown.
+        GLib.idle_add(self._show_center_spinner)
+
         if not self.files_loaded:
-            # If files are not loaded yet, queue the search and return.
-            # The scan_files_folder_threaded method will pick up pending_search_query.
             self.pending_search_query = query
-            # print(f"Search for '{query}' deferred as files are not loaded yet.")
+            # Spinner is already shown by the caller or initial scan.
             return
 
         try:
@@ -1663,6 +1725,7 @@ class BackupWindow(Adw.ApplicationWindow):
         except Exception as e:
             print(f"Error during search: {e}")
             results = []
+        # Hide spinner after results are processed by populate_results
         GLib.idle_add(self.populate_results, results)
     
     def search_backup_sources(self, query):
@@ -1715,6 +1778,9 @@ class BackupWindow(Adw.ApplicationWindow):
 
     def populate_results(self, results):
         """Populate the results listbox with up to 'self.page_size' search results, aligned in columns."""
+        # Ensure the content page is visible and spinner is hidden
+        GLib.idle_add(self._hide_center_spinner)
+
         if hasattr(self, "loading_label"):
             pass
             

@@ -260,7 +260,7 @@ class SERVER:
 			cmdline = p.cmdline()
 			if not cmdline:
 				# This case is unlikely if psutil.Process(pid) succeeded without ZombieProcess
-				logging.warning(f"Could not retrieve command line for PID {pid}. Cannot definitively verify daemon identity. Assuming running based on PID existence and Process() success.")
+				logging.info(f"Could not retrieve command line for PID {pid}. Cannot definitively verify daemon identity. Assuming running based on PID existence and Process() success.")
 				return True
 
 			daemon_script_name = os.path.basename(self.DAEMON_PY_LOCATION)
