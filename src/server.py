@@ -253,19 +253,20 @@ class SERVER:
 			return False
 
 		try:
-			if not psutil.pid_exists(pid):
-				logging.warning(f"Process with PID {pid} from {self.DAEMON_PID_LOCATION} does not exist. PID file may be stale.")
-				return False
+			# Attempt to create a Process object. This will raise NoSuchProcess if the PID is invalid.
+			p = psutil.Process(pid) # Raises NoSuchProcess, ZombieProcess, AccessDenied
 
-			p = psutil.Process(pid)
+			# If we reach here, the process exists. Now verify it's our daemon.
 			cmdline = p.cmdline()
 			if not cmdline:
-				logging.warning(f"Could not retrieve command line for PID {pid}. Cannot definitively verify daemon identity. Assuming running based on PID existence.")
+				# This case is unlikely if psutil.Process(pid) succeeded without ZombieProcess
+				logging.warning(f"Could not retrieve command line for PID {pid}. Cannot definitively verify daemon identity. Assuming running based on PID existence and Process() success.")
 				return True
 
 			daemon_script_name = os.path.basename(self.DAEMON_PY_LOCATION)
 			is_our_daemon = False
 			for arg in cmdline:
+				# Check if the daemon script path or just the script name is in the command line arguments
 				if self.DAEMON_PY_LOCATION in arg or daemon_script_name in arg:
 					is_our_daemon = True
 					break
@@ -275,16 +276,22 @@ class SERVER:
 				return True
 			else:
 				logging.warning(f"Process with PID {pid} exists, but its command line {cmdline} does not match expected daemon script '{daemon_script_name}'. PID file may be stale or belong to another process.")
+				# Consider if the PID file should be cleaned up by the daemon's startup logic if this state persists.
 				return False
 
 		except psutil.NoSuchProcess:
-			logging.warning(f"Process with PID {pid} from {self.DAEMON_PID_LOCATION} vanished (NoSuchProcess). PID file may be stale.")
+			logging.warning(f"Process with PID {pid} from {self.DAEMON_PID_LOCATION} does not exist (psutil.NoSuchProcess). PID file may be stale.")
+			return False
+		except psutil.ZombieProcess:
+			logging.warning(f"Process with PID {pid} from {self.DAEMON_PID_LOCATION} is a zombie process. PID file is stale.")
+			# The daemon's startup logic should ideally clean up stale PID files.
 			return False
 		except psutil.AccessDenied:
-			logging.error(f"Access denied when trying to inspect process with PID {pid}. Cannot verify daemon identity. Assuming running based on PID existence.")
-			return True
+			logging.error(f"Access denied when trying to inspect process with PID {pid}. Cannot verify daemon identity. Assuming not running for safety.")
+			# Returning False is safer as it might allow a new daemon to start and correct the PID file.
+			return False
 		except Exception as e:
-			logging.error(f"Unexpected error checking process PID {pid} with psutil: {e}. Assuming not running for safety.")
+			logging.error(f"Unexpected error checking process PID {pid} with psutil: {e}. Assuming not running.")
 			return False
 	
 	def is_first_backup(self) -> bool:
@@ -322,6 +329,10 @@ class SERVER:
 			#print("Failed to detect filesystem type:", e)
 			return "Unknown"
 	
+	# Starred files location
+	def get_starred_files_location(self) -> str: 
+		return f"{self.create_base_folder()}/.starred_files.json"
+
 	# Hidden files location
 	def get_summary_filename(self) -> str: 
 		return f"{self.create_base_folder()}/.backup_summary.json"

@@ -124,6 +124,8 @@ class DeviceSelectionWindow(Adw.Window):
 
 
 class BackupWindow(Adw.ApplicationWindow):
+    MAX_STARRED_FILES = 10
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.set_default_size(1300, 800) # Adjusted width for the new panel
@@ -153,6 +155,10 @@ class BackupWindow(Adw.ApplicationWindow):
         self.folder_status_widgets = {} # To store icon widgets for top-level folders
         self.currently_scanning_top_level_folder_name = None # Track which top-level folder is scanning
         self.transfer_rows = {} # To track active transfers and their Gtk.ListBoxRow widgets
+        self.search_spinner = None # Initialize search spinner
+        self.starred_files_flowbox = None # For the "Starred Items" section
+        self.starred_files = [] # Use a list to maintain order for starred files
+        self._load_starred_files_from_json() # Load starred files at startup, this method initializes self.starred_files
 
         # Get exclude hidden items setting from the server 
         self.exclude_hidden_itens: bool = server.get_database_value(
@@ -176,6 +182,7 @@ class BackupWindow(Adw.ApplicationWindow):
         self._create_main_content()
 
         self._populate_suggested_files() # Add this call
+        self._populate_starred_files() # Add this call for starred items
         self._set_initial_daemon_state_and_update_icon()
         self.populate_latest_backups()  # At startup populate with latest backups results
         self._check_for_critical_log_errors() # Check for critical errors at startup
@@ -202,6 +209,20 @@ class BackupWindow(Adw.ApplicationWindow):
         settings_action.connect("activate", self.on_settings_clicked)
         self.add_action(settings_action)
 
+        # Search Entry - Moved to Header Bar
+        self.search_entry = Gtk.SearchEntry()
+        self.search_entry.set_placeholder_text("Search e.g: text.txt or Documents/text.txt")
+        self.search_entry.set_hexpand(False) # The Clamp will handle expansion if needed
+        self.search_entry.set_sensitive(has_driver_connection())
+        self.search_entry.connect("search-changed", self.on_search_changed)
+
+        # Wrap search entry in Adw.Clamp to control its maximum width
+        search_clamp = Adw.Clamp()
+        search_clamp.set_child(self.search_entry)
+        search_clamp.set_size_request(850, 22) # Adjust this value as needed for desired min width
+        search_clamp.set_maximum_size(500) # Adjust this value as needed for desired max width
+        header.set_title_widget(search_clamp)
+
         # System Restore Action
         restore_action = Gio.SimpleAction.new("systemrestore", None)
         restore_action.connect("activate", self.on_restore_system_button_clicked)
@@ -222,9 +243,31 @@ class BackupWindow(Adw.ApplicationWindow):
         main_menu_button.set_popover(main_popover_menu)
 
         menu_model = Gio.Menu()
-        menu_model.append("Logs", "win.logs")
-        menu_model.append("System Restore", "win.systemrestore")
-        menu_model.append("Settings", "win.settings")
+
+        # Logs
+        logs_item = Gio.MenuItem.new(label="Logs", detailed_action="win.logs") #NOSONAR
+        logs_icon = Gio.ThemedIcon.new("text-x-generic-symbolic") # Or "document-properties-symbolic"
+        logs_item.set_icon(logs_icon)
+        menu_model.append_item(logs_item)
+
+        # Search Spinner (added before the menu button)
+        self.search_spinner = Gtk.Spinner()
+        self.search_spinner.set_spinning(False)
+        self.search_spinner.set_visible(False)
+        header.pack_end(self.search_spinner)
+
+        # System Restore
+        restore_item = Gio.MenuItem.new(label="System Restore", detailed_action="win.systemrestore")
+        restore_icon = Gio.ThemedIcon.new("document-revert-symbolic") # Or "system-backup-symbolic"
+        restore_item.set_icon(restore_icon)
+        menu_model.append_item(restore_item)
+
+        # Settings
+        settings_item = Gio.MenuItem.new(label="Settings", detailed_action="win.settings")
+        settings_icon = Gio.ThemedIcon.new("preferences-system-symbolic") # Or "emblem-system-symbolic"
+        settings_item.set_icon(settings_icon)
+        menu_model.append_item(settings_item)
+
         main_popover_menu.set_menu_model(menu_model)
         main_content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         self.main_content = main_content # Store as instance variable
@@ -264,6 +307,32 @@ class BackupWindow(Adw.ApplicationWindow):
         self.suggested_files_flowbox.set_selection_mode(Gtk.SelectionMode.NONE)
         self.suggested_files_flowbox.set_margin_bottom(12) # Space before next section
         center_box.append(self.suggested_files_flowbox)
+
+        # --- Starred Files Section ---
+        starred_files_header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        starred_files_header_box.set_margin_top(12) # Margin from suggested files
+        starred_files_header_box.set_margin_bottom(6)
+        center_box.append(starred_files_header_box)
+
+        starred_files_title_label = Gtk.Label(xalign=0)
+        starred_files_title_label.set_text("Starred Files")
+        starred_files_title_label.add_css_class("title-3")
+        starred_files_title_label.set_hexpand(True) # Allow label to take space
+        starred_files_header_box.append(starred_files_title_label)
+
+        clear_starred_button = Gtk.Button(icon_name="edit-clear-all-symbolic")
+        clear_starred_button.set_tooltip_text("Clear all starred files")
+        clear_starred_button.add_css_class("flat")
+        clear_starred_button.set_valign(Gtk.Align.CENTER)
+        clear_starred_button.connect("clicked", self._on_clear_starred_files_clicked)
+        starred_files_header_box.append(clear_starred_button)
+
+        self.starred_files_flowbox = Gtk.FlowBox()
+        self.starred_files_flowbox.set_valign(Gtk.Align.START)
+        self.starred_files_flowbox.set_max_children_per_line(5) # Consistent with suggested files
+        self.starred_files_flowbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.starred_files_flowbox.set_margin_bottom(12) # Space before latest backups
+        center_box.append(self.starred_files_flowbox)
 
         # --- Latest Backups/Search Resulst Section ---
         self.top_center_label = Gtk.Label(xalign=0)
@@ -408,18 +477,6 @@ class BackupWindow(Adw.ApplicationWindow):
         left_sidebar.set_vexpand(True) # Allow vertical expansion
         left_sidebar.set_hexpand(False) # Prevent vertical expansion
         left_sidebar.set_valign(Gtk.Align.FILL) # Fill available vertical space
-
-        # Search Entry - Moved to Left Sidebar
-        self.search_entry = Gtk.SearchEntry()
-        self.search_entry.set_placeholder_text("Search e.g: text.txt or Documents/text.txt")
-        self.search_entry.set_hexpand(True) # Allow it to take available horizontal space in sidebar
-        self.search_entry.set_sensitive(has_driver_connection())
-        self.search_entry.connect("search-changed", self.on_search_changed)
-        self.search_entry.set_margin_top(0) # Add some space above the search bar
-        self.search_entry.set_margin_start(0)
-        self.search_entry.set_margin_end(0)   # Add some space on the right side
-        self.search_entry.set_margin_bottom(0) # Add some space below the search bar
-        left_sidebar.append(self.search_entry)
 
         # Revealer for Scan Status
         self.scan_status_revealer = Gtk.Revealer()
@@ -737,6 +794,7 @@ class BackupWindow(Adw.ApplicationWindow):
 
         GLib.idle_add(self._refresh_left_sidebar_summary_and_usage) # Refresh on device change
         GLib.idle_add(self._populate_suggested_files) # Refresh suggested files
+        GLib.idle_add(self._populate_starred_files)   # Refresh starred files
         GLib.idle_add(self._set_initial_daemon_state_and_update_icon) # Refresh daemon state icon
         GLib.idle_add(self.populate_latest_backups) # Refresh latest backups
         GLib.idle_add(self._check_for_critical_log_errors) # Check for critical errors
@@ -1055,6 +1113,90 @@ class BackupWindow(Adw.ApplicationWindow):
         # The status icon is updated by _update_status_icon_display based on self.current_daemon_state
                 
     ##########################################################################
+    # STARRED FILES - LOAD/SAVE
+    ##########################################################################
+    def _load_starred_files_from_json(self):
+        starred_file_json_path = server.get_starred_files_location()
+        if os.path.exists(starred_file_json_path):
+            try:
+                with open(starred_file_json_path, 'r') as f:
+                    loaded_list = json.load(f)
+                    if isinstance(loaded_list, list):
+                        # If more than MAX_STARRED_FILES, keep only the most recent ones
+                        self.starred_files = loaded_list[-self.MAX_STARRED_FILES:]
+                    else:
+                        print(f"Warning: Starred files JSON content is not a list. Initializing as empty.")
+                        self.starred_files = []
+            except (json.JSONDecodeError, TypeError) as e:
+                print(f"Error loading starred files from {starred_file_json_path}: {e}. Initializing as empty set.")
+                self.starred_files = []
+            except Exception as e:
+                print(f"Unexpected error loading starred files from {starred_file_json_path}: {e}. Initializing as empty list.")
+                self.starred_files = []
+        else:
+            self.starred_files = []
+
+    def _on_clear_starred_files_clicked(self, button):
+        """Clears all starred files and updates the UI."""
+        if not self.starred_files: # Nothing to clear
+            return
+
+        self.starred_files.clear()
+        starred_file_json_path = server.get_starred_files_location()
+        if os.path.exists(starred_file_json_path):
+            try:
+                os.remove(starred_file_json_path)
+                print("Cleared starred files JSON.")
+            except OSError as e:
+                print(f"Error removing starred files JSON {starred_file_json_path}: {e}")
+        GLib.idle_add(self._populate_starred_files)
+
+        # Also, reset star icons in the current search results list
+        current_row = self.listbox.get_first_child()
+        while current_row:
+            # The Gtk.ListBoxRow's child is the Gtk.Revealer, whose child is the Gtk.Grid
+            revealer = current_row.get_child()
+            if isinstance(revealer, Gtk.Revealer):
+                grid = revealer.get_child()
+                if isinstance(grid, Gtk.Grid):
+                    star_button = grid.get_child_at(3, 0) # Assuming star button is at col 3, row 0
+                    if isinstance(star_button, Gtk.Button) and hasattr(star_button, "file_path"):
+                        star_button.set_icon_name("non-starred-symbolic")
+                        star_button.set_tooltip_text("Star this item")
+            current_row = current_row.get_next_sibling()
+
+    def _get_main_backup_equivalent_path(self, file_path_clicked):
+        """
+        Returns the path equivalent in the .main_backup folder.
+        Based on current UI logic, file_path_clicked should already be
+        a path within server.main_backup_folder() when this is called
+        because the star button is only enabled for such files.
+        This method includes fallback logic for robustness if that precondition changes.
+        """
+        main_backup_abs = os.path.abspath(server.main_backup_folder())
+        file_path_abs = os.path.abspath(file_path_clicked)
+
+        if file_path_abs.startswith(main_backup_abs):
+            return file_path_clicked # Already the main backup path
+
+        # Fallback: Attempt to convert if it's an incremental backup path
+        logging.warning(
+            f"_get_main_backup_equivalent_path called with an unexpected path: {file_path_clicked}. "
+            f"Attempting to convert to main backup equivalent."
+        )
+        backup_root_abs = os.path.abspath(server.backup_folder_name())
+        if file_path_abs.startswith(backup_root_abs):
+            # Path is like /path/to/driver/dataguardian/backups/DATE/TIME/rel/path/to/file
+            relative_to_backup_root = os.path.relpath(file_path_abs, backup_root_abs)
+            parts = relative_to_backup_root.split(os.sep)
+            if len(parts) > 2: # Must have DATE, TIME, and then the actual relative path
+                actual_relative_path = os.path.join(*parts[2:])
+                return os.path.join(main_backup_abs, actual_relative_path)
+            else:
+                logging.error(f"  Path {file_path_clicked} looks incremental but structure is unexpected. Returning original.")
+        return file_path_clicked # Fallback if conversion is not possible
+
+    ##########################################################################
     # SUGGESTED FILES
     ##########################################################################
     def _populate_suggested_files(self):
@@ -1164,6 +1306,55 @@ class BackupWindow(Adw.ApplicationWindow):
         # The on_search_changed method has a timer, so calling perform_search directly is better here.
         query = search_term.strip().lower()
         threading.Thread(target=self.perform_search, args=(query,), daemon=True).start()
+
+    def _populate_starred_files(self):
+        # Clear previous starred items from the flowbox
+        child = self.starred_files_flowbox.get_child_at_index(0)
+        while child:
+            self.starred_files_flowbox.remove(child)
+            child = self.starred_files_flowbox.get_child_at_index(0)
+
+        if not self.starred_files:
+            self.starred_files_flowbox.set_visible(False)
+            # Optionally hide the "Starred Items" title label if you have a reference to it
+            return
+
+        self.starred_files_flowbox.set_visible(True)
+
+        for starred_file_path in self.starred_files:
+            if not os.path.exists(starred_file_path): # Check if file still exists in backup
+                print(f"Starred file {starred_file_path} no longer exists in backup. Skipping.")
+                # Optionally, you might want to remove it from self.starred_files here
+                # self.starred_files.remove(starred_file_path) # Be careful with modifying during iteration
+                continue
+
+            basename = os.path.basename(starred_file_path)
+            # For starred items, the "thumbnail_path" is the starred_file_path itself
+            # The "original_path" for search context:
+            original_path_for_search = ""
+            if starred_file_path.startswith(server.main_backup_folder()):
+                rel_path = os.path.relpath(starred_file_path, server.main_backup_folder())
+                original_path_for_search = os.path.join(server.USER_HOME, rel_path)
+            else: # For incremental, it's harder to map back to a simple original_path for search.
+                  # We can use the basename or the full backup path for search context.
+                original_path_for_search = starred_file_path # Or just basename
+
+            button_content = Adw.ButtonContent()
+            pixbuf = self._generate_thumbnail_pixbuf(starred_file_path, size_px=48)
+            if pixbuf:
+                try:
+                    button_content.set_paintable(Gdk.Texture.new_for_pixbuf(pixbuf))
+                except AttributeError:
+                    button_content.set_icon_name("image-x-generic-symbolic") # Fallback icon
+            else:
+                button_content.set_icon_name("text-x-generic-symbolic") # Fallback icon
+
+            button_content.set_label(basename)
+
+            btn = Gtk.Button(child=button_content, has_frame=True)
+            btn.add_css_class("suggested-file-card") # Reuse styling
+            btn.connect("clicked", self.on_suggested_file_clicked, basename, original_path_for_search)
+            self.starred_files_flowbox.append(btn)
 
     ##########################################################################
     # Backup
@@ -1610,13 +1801,33 @@ class BackupWindow(Adw.ApplicationWindow):
             date_label.add_css_class("caption") # Style date as caption
             grid.attach(date_label, 2, 0, 1, 1) # Col 2: Date
 
-            # Preview button for each row (conditionally visible)
-            preview_button_row = Gtk.Button(label="Preview")
-            preview_button_row.set_tooltip_text("Show a preview of the selected file.")
-            # preview_button_row.add_css_class("flat") # Use flat style for less emphasis than restore
-            setattr(preview_button_row, "file_path", file_info["path"])
-            preview_button_row.connect("clicked", lambda btn: self.open_modal_preview_window(getattr(btn, "file_path")))
-            preview_button_row.set_hexpand(False)
+            # Star button for each row
+            star_button_row = Gtk.Button()
+            star_button_row.add_css_class("flat")
+            setattr(star_button_row, "file_path", file_info["path"])
+
+            # Allow starring for any file. The on_star_button_clicked method
+            # will use _get_main_backup_equivalent_path to star the canonical version.
+            star_button_row.set_sensitive(True)
+            path_for_star_check = self._get_main_backup_equivalent_path(file_info["path"])
+
+            if path_for_star_check in self.starred_files:
+                star_button_row.set_icon_name("starred-symbolic")
+                star_button_row.set_tooltip_text("Unstar this item")
+            else:
+                star_button_row.set_icon_name("non-starred-symbolic")
+                star_button_row.set_tooltip_text("Star this item")
+            star_button_row.connect("clicked", self.on_star_button_clicked, file_info["path"], star_button_row)
+            grid.attach(star_button_row, 3, 0, 1, 1) # Col 3: Star Button
+
+            # Open button for each row
+            open_file_button_row = Gtk.Button(label="Open File")
+            open_file_button_row.set_tooltip_text("Open this backed-up file with the default application.")
+            # open_file_button_row.add_css_class("flat") # Optional styling
+            setattr(open_file_button_row, "file_path", file_info["path"])
+            open_file_button_row.connect("clicked", lambda btn: self.on_open_file_clicked(getattr(btn, "file_path")))
+            open_file_button_row.set_hexpand(False)
+            grid.attach(open_file_button_row, 4, 0, 1, 1) # Col 4: Open Button
 
             # on_open_location_clicked
             open_location_button_row = Gtk.Button(label="Open Location")
@@ -1625,7 +1836,7 @@ class BackupWindow(Adw.ApplicationWindow):
             setattr(open_location_button_row, "file_path", file_info["path"])
             open_location_button_row.connect("clicked", lambda btn: self.on_open_location_clicked(getattr(btn, "file_path")))
             open_location_button_row.set_hexpand(False)
-            grid.attach(open_location_button_row, 3, 0, 1, 1) # Col 3: Preview Button
+            grid.attach(open_location_button_row, 5, 0, 1, 1) # Col 5: Open Location Button
 
             # Find file versions
             find_versions_button_row = Gtk.Button(label="Versions")
@@ -1637,32 +1848,16 @@ class BackupWindow(Adw.ApplicationWindow):
             # find_versions_button_row.connect("clicked", lambda btn: self.open_preview_window(getattr(btn, "file_path")))
             find_versions_button_row.connect("clicked", lambda btn: self.find_update(getattr(btn, "file_path")))
             find_versions_button_row.set_hexpand(False)
-            grid.attach(find_versions_button_row, 4, 0, 1, 1) # Col 4: Preview Button
-
-            # Determine if preview is available for this file type
-            filepath_for_preview = file_info["path"]
-            ext_preview = os.path.splitext(filepath_for_preview)[1].lower()
-            mime_preview, _ = mimetypes.guess_type(filepath_for_preview)
-            if mime_preview is None: mime_preview = ""
-
-            is_previewable = False #NOSONAR
-            # PDF Preview Removed
-            if (ext_preview in server.TEXT_EXTENSIONS or mime_preview.startswith("text")) and os.path.exists(filepath_for_preview): #NOSONAR
-                is_previewable = True
-            elif (ext_preview in server.IMAGE_EXTENSIONS or mime_preview.startswith("image")) and os.path.exists(filepath_for_preview):
-                is_previewable = True
-            
-            preview_button_row.set_sensitive(is_previewable)
-            grid.attach(preview_button_row, 5, 0, 1, 1) # Col 5: Preview Button
+            grid.attach(find_versions_button_row, 6, 0, 1, 1) # Col 6: Versions Button
 
             # Restore button for each row
-            restore_button_row = Gtk.Button(label="Restore")
+            restore_button_row = Gtk.Button(label="Restore File")
             restore_button_row.set_tooltip_text("Restore this version of the file to its original location.")
             restore_button_row.add_css_class("suggested-action")
             setattr(restore_button_row, "file_path", file_info["path"])
             restore_button_row.connect("clicked", self.on_restore_button_clicked_from_row) # Assuming this method exists
             restore_button_row.set_hexpand(False) # Ensure it doesn't expand
-            grid.attach(restore_button_row, 6, 0, 1, 1) # Col 6: Restore Button
+            grid.attach(restore_button_row, 7, 0, 1, 1) # Col 7: Restore Button
             
             # Wrap grid in a revealer for fade-in animation
             row_revealer = Gtk.Revealer()
@@ -1679,8 +1874,80 @@ class BackupWindow(Adw.ApplicationWindow):
             listbox_row.add_css_class("file-list-row-card") # Apply card-like styling
             listbox_row.device_path = file_info["path"]
             self.listbox.append(listbox_row)
-            row_revealer.set_reveal_child(True) # Trigger animation
+            # GLib.idle_add(row_revealer.set_reveal_child, True) # Trigger animation
+            row_revealer.set_reveal_child(True)
+
+    def on_star_button_clicked(self, button_widget, file_path_clicked, star_button_itself):
+        # Determine the path to actually store in self.starred_files (always the .main_backup equivalent)
+        path_to_star_or_unstar = self._get_main_backup_equivalent_path(file_path_clicked)
+
+        if path_to_star_or_unstar in self.starred_files:
+            # Item is currently starred, so unstar it
+            self.starred_files.remove(path_to_star_or_unstar)
+            star_button_itself.set_icon_name("non-starred-symbolic")
+            star_button_itself.set_tooltip_text("Star this item")
+            print(f"Unstarred (actual stored path): {path_to_star_or_unstar} (clicked: {file_path_clicked})")
+        else:
+            # Item is not starred, so star it
+            # Add to the end (most recent)
+            self.starred_files.append(path_to_star_or_unstar)
+            # If limit exceeded, remove the oldest (first item)
+            if len(self.starred_files) > self.MAX_STARRED_FILES:
+                removed_oldest = self.starred_files.pop(0)
+                print(f"Starred files limit ({self.MAX_STARRED_FILES}) reached. Removed oldest starred: {removed_oldest}")
+            star_button_itself.set_icon_name("starred-symbolic")
+            star_button_itself.set_tooltip_text("Unstar this item")
+            print(f"Starred (actual stored path): {path_to_star_or_unstar} (clicked: {file_path_clicked})")
+        
+        # Save to JSON
+        starred_file_json_path = server.get_starred_files_location()
+        try:
+            os.makedirs(os.path.dirname(starred_file_json_path), exist_ok=True)
+            with open(starred_file_json_path, 'w') as f:
+                json.dump(self.starred_files, f) # self.starred_files is already a list
+        except Exception as e:
+            print(f"Error saving starred files to {starred_file_json_path}: {e}")
+        GLib.idle_add(self._populate_starred_files) # Refresh the starred items section
     
+    def on_open_file_clicked(self, file_path_from_button):
+        if file_path_from_button:
+            if not os.path.isfile(file_path_from_button):
+                print(f"Error: The file does not exist or is not accessible: {file_path_from_button}")
+                dialog = Adw.MessageDialog(transient_for=self, modal=True,
+                                           title="Cannot Open File",
+                                           body=f"The file '{os.path.basename(file_path_from_button)}' could not be found or accessed at the backup location.")
+                dialog.add_response("ok", "OK")
+                dialog.connect("response", lambda d, r: d.close())
+                dialog.present()
+                return
+
+            try:
+                file_uri = GLib.filename_to_uri(file_path_from_button, None)
+                Gio.AppInfo.launch_default_for_uri_async(file_uri, None, None,
+                                                         self._on_open_file_callback, file_path_from_button)
+                print(f"Attempting to open file: {file_path_from_button}")
+            except GLib.Error as e:
+                print(f"GLib error preparing to open file {file_path_from_button}: {e}. Falling back to xdg-open.")
+                self._fallback_open_file(file_path_from_button)
+            except Exception as e:
+                print(f"Unexpected error opening file {file_path_from_button}: {e}. Falling back to xdg-open.")
+                self._fallback_open_file(file_path_from_button)
+        else:
+            print("No file path provided to open.")
+
+    def _on_open_file_callback(self, source_object, res, user_data):
+        file_path = user_data
+        try:
+            success = Gio.AppInfo.launch_default_for_uri_finish(res)
+            if success:
+                print(f"Successfully launched default application for: {file_path}")
+            else:
+                print(f"Failed to launch default application for: {file_path} (launch_default_for_uri_finish returned false). Falling back.")
+                self._fallback_open_file(file_path) # Fallback if Gio launch fails
+        except GLib.Error as e:
+            print(f"Error launching default application for {file_path}: {e}. Falling back.")
+            self._fallback_open_file(file_path)
+
     # Open location button
     # def on_open_location_clicked(self, button):
     #     if self.selected_file_path:
@@ -1720,6 +1987,20 @@ class BackupWindow(Adw.ApplicationWindow):
         else:
             print("No file path provided to open location.")
             
+    def _fallback_open_file(self, file_path):
+        """Fallback to xdg-open if Gio methods fail for opening a file."""
+        try:
+            sub.Popen(["xdg-open", file_path])
+            print(f"Opened file: {file_path} using xdg-open as fallback.")
+        except Exception as e_xdg:
+            print(f"Failed to open file {file_path} with xdg-open: {e_xdg}")
+            dialog = Adw.MessageDialog(transient_for=self, modal=True,
+                                       title="Error Opening File",
+                                       body=f"Could not open file: {os.path.basename(file_path)}\nDetails: {e_xdg}")
+            dialog.add_response("ok", "OK")
+            dialog.connect("response", lambda d, r: d.close())
+            dialog.present()
+
     def _fallback_open_location(self, folder_path):
         """Fallback to xdg-open if Gio methods fail."""
         try:
@@ -1884,7 +2165,7 @@ class BackupWindow(Adw.ApplicationWindow):
     def show_update_window(self, file_name, results):
         """
         Show a window with all previous backups for the selected file.
-            Reminder:
+        Reminder:
                 - This will only show backups that are not in the main backup folder, e.g.: 01.01.2025/12-05/...
         """
         # Create a small window (no minimize/maximize)
@@ -1892,12 +2173,10 @@ class BackupWindow(Adw.ApplicationWindow):
             title=f'All previous backups for "{file_name}"',
             modal=True,
             transient_for=self,
-            default_width=800,
-            default_height=600
+            default_width=850, # Slightly wider for more info
+            default_height=650
         )
-        #win.set_resizable(True)
-        #win.set_deletable(True)  # Allow close, but not minimize/maximize
-        self.update_window = win  # Keep a reference
+        self.update_window = win
 
         def on_close(win, *args):
             self.update_window = None
@@ -1906,14 +2185,22 @@ class BackupWindow(Adw.ApplicationWindow):
 
         # Header bar with Close and Restore buttons
         header = Gtk.HeaderBar()
-        # header.set_show_close_button(True)
-        #header.set_size_request(210, -1)
-        #header.set_margin_top(12)
-        #header.set_margin_bottom(12)
-        #header.set_margin_start(12)
-        #header.set_margin_end(12)
-        win.set_titlebar(header)
+        header.set_title_widget(Gtk.Label(label=f"Versions for \"{file_name}\"")) # Adwaita style title
+        win.set_titlebar(header) # Set header for the Gtk.Window
 
+        # Open button
+        open_button = Gtk.Button(label="Open")
+        open_button.set_tooltip_text("Open this version of the file.")
+        open_button.set_sensitive(False)
+        header.pack_start(open_button)
+
+        # Open Location button
+        open_location_button = Gtk.Button(label="Open Location")
+        open_location_button.set_tooltip_text("Open the folder containing this backup version.")
+        open_location_button.set_sensitive(False)
+        header.pack_start(open_location_button)
+
+        # Restore button (moved to header)
         restore_button = Gtk.Button(label="Restore File")
         restore_button.set_css_classes(["suggested-action"])
         restore_button.set_sensitive(False)
@@ -1937,10 +2224,12 @@ class BackupWindow(Adw.ApplicationWindow):
         scrolled.set_hexpand(True)
         vbox.append(scrolled)
 
-        listbox = Gtk.ListBox()
+        listbox = Gtk.ListBox() #NOSONAR
         listbox.set_vexpand(True)
         listbox.set_hexpand(True)
+        listbox.add_css_class("overview-card") # Consistent styling with main listbox
         scrolled.set_child(listbox)
+        listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
 
         # For status messages
         status_label = Gtk.Label()
@@ -1953,53 +2242,79 @@ class BackupWindow(Adw.ApplicationWindow):
 
         # Populate the listbox with backup versions
         for result in results:
-            row = Gtk.ListBoxRow()
-            hbox = Gtk.Box()
-            row.set_child(hbox)
-
             # Skip backups that are from the main backup folder
             if server.MAIN_BACKUP_LOCATION in result["path"]:
-                # Only show backups that are not in the main backup folder
-                # e.g.: 01.01.2025/12-05/...
                 continue
 
-            # Path (shortened)
-            path_label = Gtk.Label(label=os.path.relpath(result["path"], server.backup_folder_name()), xalign=0)
+            row = Gtk.ListBoxRow()
+            row.set_margin_top(8)
+            row.set_margin_bottom(8)
+            row.add_css_class("file-list-row-card") # Consistent styling
+
+            grid = Gtk.Grid()
+            grid.set_column_spacing(12)
+            grid.set_hexpand(True)
+            row.set_child(grid)
+
+            # Icon
+            ext = os.path.splitext(result["name"])[1].lower()
+            icon_name = "text-x-generic" # Default
+            if ext == ".pdf": icon_name = "application-pdf"
+            elif ext in server.TEXT_EXTENSIONS: icon_name = "text-x-generic"
+            elif ext in server.IMAGE_EXTENSIONS: icon_name = "image-x-generic"
+            # Add more specific icons as needed
+
+            icon_widget = Gtk.Image.new_from_icon_name(icon_name)
+            icon_widget.set_pixel_size(24) # Slightly smaller icon for version list
+            icon_widget.set_valign(Gtk.Align.CENTER)
+            grid.attach(icon_widget, 0, 0, 1, 2) # Span 2 rows if using two labels
+
+            # Path Label (Primary Text)
+            path_label_text = os.path.relpath(result["path"], server.backup_folder_name())
+            path_label = Gtk.Label(label=path_label_text, xalign=0)
             path_label.set_hexpand(True)
-            hbox.append(path_label)
+            path_label.set_ellipsize(Pango.EllipsizeMode.END)
+            grid.attach(path_label, 1, 0, 1, 1)
 
-            # Extract backup date/time from the backup path
-            #rel_path = os.path.relpath(result["path"], server.backup_folder_name())
-            #parts = rel_path.split(os.sep)
-            # if len(parts) >= 2:
-            #     # Format: 12-05-2025/18-22/...
-            #     backup_date_str = f"{parts[0]} {parts[1]}"
-            # else:
-            #     backup_date_str = "Unknown"
+            # Date Label (Secondary Text - mtime of this version)
+            date_str = datetime.fromtimestamp(result["date"]).strftime("%Y-%m-%d %H:%M:%S")
+            date_label = Gtk.Label(label=date_str, xalign=0)
+            date_label.add_css_class("caption")
+            grid.attach(date_label, 1, 1, 1, 1)
 
-            # Destination label
-            # Format: /username/Documents/test.txt:
-            # destination: str = result["path"].replace(server.main_backup_folder() + "/", "")
-            # destination = os.path.join(server.USER_HOME, destination)
-            # print(destination)
-            # destination_label = Gtk.Label(label=destination, xalign=0)
-            # destination_label.set_hexpand(True)
-            # hbox.append(destination_label)
+            # Size Label (in its own column)
+            size_str = server.get_item_size(result["path"], True)
+            if size_str == "None": size_str = "N/A"
+            size_label_widget = Gtk.Label(label=size_str, xalign=1) # Align to the right
+            size_label_widget.add_css_class("caption")
+            size_label_widget.set_valign(Gtk.Align.CENTER)
+            size_label_widget.set_hexpand(False) # Don't let size expand too much
+            size_label_widget.set_width_chars(10) # Give it some minimum width
+            grid.attach(size_label_widget, 2, 0, 1, 2) # Span 2 rows, attach to col 2
 
             # Attach file path to row for later use
             row.file_path = result["path"]
             listbox.append(row)
-
         # Enable restore button only when a row is selected
         def on_row_selected(lb, row):
             restore_button.set_sensitive(row is not None)
+            open_button.set_sensitive(row is not None)
+            open_location_button.set_sensitive(row is not None)
             if row:
                 # Use the correct file path for the selected version
                 path: str = getattr(row, "file_path", None)
-                self.selected_file_path = path  # Store the full path for restore
+                self.selected_file_path = path
                 print("Selected item path:", path)
             else:
                 self.selected_file_path = None
+
+        def on_open_clicked(btn):
+            if self.selected_file_path:
+                self.on_open_file_clicked(self.selected_file_path)
+
+        def on_open_location_clicked_header(btn): # Renamed to avoid conflict
+            if self.selected_file_path:
+                self.on_open_location_clicked(self.selected_file_path)
 
         listbox.connect("row-selected", on_row_selected)
 
@@ -2012,6 +2327,9 @@ class BackupWindow(Adw.ApplicationWindow):
             file_to_restore = getattr(row, "file_path")
             self.perform_restore_action(file_to_restore, btn) # Pass the button itself
         restore_button.connect("clicked", on_restore_clicked)
+        open_button.connect("clicked", on_open_clicked)
+        open_location_button.connect("clicked", on_open_location_clicked_header)
+
         # # Add key controller for Spacebar preview
         # key_controller = Gtk.EventControllerKey()
         # def on_key_press(controller, keyval, keycode, state):
