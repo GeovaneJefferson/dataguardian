@@ -34,7 +34,7 @@ import mimetypes
 import cairo
 import tempfile
 import math
-
+import difflib 
 
 from datetime import datetime, timedelta
 

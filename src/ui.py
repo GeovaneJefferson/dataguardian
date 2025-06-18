@@ -1843,7 +1843,7 @@ class BackupWindow(Adw.ApplicationWindow):
             find_versions_button_row.set_tooltip_text(
                 "Search for all available versions of the selected file, including the current and previous backups. "
                 "Use this to restore or review earlier versions of your file.")
-            # find_versions_button_row.add_css_class("flat") # Use flat style for less emphasis than restore
+            find_versions_button_row.add_css_class("suggested-action")
             setattr(find_versions_button_row, "file_path", file_info["path"])
             # find_versions_button_row.connect("clicked", lambda btn: self.open_preview_window(getattr(btn, "file_path")))
             find_versions_button_row.connect("clicked", lambda btn: self.find_update(getattr(btn, "file_path")))
@@ -1853,7 +1853,7 @@ class BackupWindow(Adw.ApplicationWindow):
             # Restore button for each row
             restore_button_row = Gtk.Button(label="Restore File")
             restore_button_row.set_tooltip_text("Restore this version of the file to its original location.")
-            restore_button_row.add_css_class("suggested-action")
+            # restore_button_row.add_css_class("suggested-action")
             setattr(restore_button_row, "file_path", file_info["path"])
             restore_button_row.connect("clicked", self.on_restore_button_clicked_from_row) # Assuming this method exists
             restore_button_row.set_hexpand(False) # Ensure it doesn't expand
@@ -2139,6 +2139,40 @@ class BackupWindow(Adw.ApplicationWindow):
         self.settings_window.connect("close-request", on_close)
         self.settings_window.present()
         
+    def _get_original_path_from_backup(self, backup_file_path: str) -> str | None:
+        """
+        Determines the original path in the user's home directory for a given backup file path.
+        """
+        abs_backup_file_path = os.path.abspath(backup_file_path)
+        # main_backup_abs_path = os.path.abspath(server.main_backup_folder()) # Not expected from versions window
+        incremental_backups_abs_path = os.path.abspath(server.backup_folder_name())
+        
+        rel_path = None
+        if abs_backup_file_path.startswith(incremental_backups_abs_path):
+            # Path is like /path/to/driver/dataguardian/backups/DATE/TIME/rel/path/to/file
+            temp_rel_path = os.path.relpath(abs_backup_file_path, incremental_backups_abs_path)
+            parts = temp_rel_path.split(os.sep)
+            if len(parts) > 2: # Must have DATE, TIME, and then the actual relative path
+                # The first two parts are DATE and TIME, the rest is the relative path to home
+                rel_path = os.path.join(*parts[2:])
+            else:
+                logging.error(f"Could not determine relative path for incremental backup: {backup_file_path} - unexpected structure: {parts}")
+                return None
+        else:
+            # This case should ideally not be hit if called from the versions window,
+            # as it filters out main_backup_folder items.
+            # If it's a direct path from .main_backup (e.g. if this func is reused elsewhere):
+            main_backup_abs_path_check = os.path.abspath(server.main_backup_folder())
+            if abs_backup_file_path.startswith(main_backup_abs_path_check):
+                 rel_path = os.path.relpath(abs_backup_file_path, main_backup_abs_path_check)
+            else:
+                logging.error(f"File path '{backup_file_path}' is not within a known backup structure (incremental or main).")
+                return None
+            
+        if rel_path is not None:
+            return os.path.join(server.USER_HOME, rel_path)
+        return None
+
     ########################################################################################
     # Find updates for a file
     ########################################################################################
@@ -2199,6 +2233,12 @@ class BackupWindow(Adw.ApplicationWindow):
         open_location_button.set_tooltip_text("Open the folder containing this backup version.")
         open_location_button.set_sensitive(False)
         header.pack_start(open_location_button)
+
+        # Diff button
+        diff_button = Gtk.Button(label="Diff")
+        diff_button.set_tooltip_text("Compare this version with the current file in your home directory.")
+        diff_button.set_sensitive(False) # Initially insensitive
+        header.pack_start(diff_button)
 
         # Restore button (moved to header)
         restore_button = Gtk.Button(label="Restore File")
@@ -2297,16 +2337,27 @@ class BackupWindow(Adw.ApplicationWindow):
             listbox.append(row)
         # Enable restore button only when a row is selected
         def on_row_selected(lb, row):
-            restore_button.set_sensitive(row is not None)
-            open_button.set_sensitive(row is not None)
-            open_location_button.set_sensitive(row is not None)
+            is_selected = row is not None
+            restore_button.set_sensitive(is_selected)
+            open_button.set_sensitive(is_selected)
+            open_location_button.set_sensitive(is_selected)
+            
+            can_diff = False
             if row:
-                # Use the correct file path for the selected version
-                path: str = getattr(row, "file_path", None)
-                self.selected_file_path = path
-                print("Selected item path:", path)
+                selected_backup_path = getattr(row, "file_path", None)
+                win.selected_backup_version_path = selected_backup_path # Store on the versions window
+                self.selected_file_path = selected_backup_path # Keep this for open/restore if needed
+
+                if selected_backup_path:
+                    original_path = self._get_original_path_from_backup(selected_backup_path)
+                    ext = os.path.splitext(selected_backup_path)[1].lower()
+                    if ext in server.TEXT_EXTENSIONS and original_path and os.path.exists(original_path):
+                        can_diff = True
             else:
+                win.selected_backup_version_path = None
                 self.selected_file_path = None
+            
+            diff_button.set_sensitive(can_diff)
 
         def on_open_clicked(btn):
             if self.selected_file_path:
@@ -2316,8 +2367,13 @@ class BackupWindow(Adw.ApplicationWindow):
             if self.selected_file_path:
                 self.on_open_location_clicked(self.selected_file_path)
 
-        listbox.connect("row-selected", on_row_selected)
+        def on_diff_btn_clicked(btn_widget): # Renamed to avoid conflict
+            # 'win' here is the versions_window
+            self.on_show_diff_clicked(btn_widget, win) 
 
+        listbox.connect("row-selected", on_row_selected)
+        diff_button.connect("clicked", on_diff_btn_clicked)
+        
         # Restore logic
         def on_restore_clicked(btn):
             # btn.set_sensitive(False) # Sensitivity handled by perform_restore_action
@@ -2344,6 +2400,36 @@ class BackupWindow(Adw.ApplicationWindow):
 
         win.connect("close-request", on_close)
         win.present()
+
+    def on_show_diff_clicked(self, button, versions_window):
+        backup_file_path = getattr(versions_window, "selected_backup_version_path", None)
+        if not backup_file_path:
+            return
+
+        original_file_path = self._get_original_path_from_backup(backup_file_path)
+        if not original_file_path or not os.path.exists(original_file_path):
+            dialog = Adw.MessageDialog(transient_for=versions_window, modal=True,
+                                       title="Diff Error",
+                                       body="Original file not found in your home directory to compare against.")
+            dialog.add_response("ok", "OK")
+            dialog.connect("response", lambda d, r: d.close())
+            dialog.present()
+            return
+
+        backup_label_extra = ""
+        try:
+            path_parts = backup_file_path.split(os.sep)
+            if len(path_parts) >= 3 and path_parts[-3].count('-') == 2 and path_parts[-2].count('-') == 1:
+                date_str, time_str = path_parts[-3], path_parts[-2]
+                backup_label_extra = f" (Backup: {date_str} {time_str.replace('-', ':')})"
+        except Exception: pass
+
+        diff_win = DiffViewWindow(
+            transient_for=versions_window,
+            file1_path=backup_file_path, file2_path=original_file_path,
+            file1_label=f"{os.path.basename(backup_file_path)}{backup_label_extra}",
+            file2_label=f"{os.path.basename(original_file_path)} (Current in Home)")
+        diff_win.present()
     
     # def update_overview_cards_from_summary(self):
     #     summary_file_path = server.get_summary_filename()
@@ -3406,8 +3492,96 @@ class BackupApp(Adw.Application):
         super().__init__(application_id=server.ID,
                         flags=Gio.ApplicationFlags.FLAGS_NONE)
     def do_activate(self):
+        # Ensure dynamic CSS provider is set up early if BackupWindow uses it in __init__
+        # This is a common pattern if dynamic styles are applied during window construction.
+        # If BackupWindow._add_dynamic_css_rule is called in its __init__, this needs to be here.
+        # However, based on current BackupWindow structure, it seems dynamic_css_provider
+        # is initialized within BackupWindow.__init__ itself, which is fine.
+
         win = BackupWindow(application=self)
         win.present()
+
+class DiffViewWindow(Adw.Window):
+    def __init__(self, transient_for, file1_path, file2_path, file1_label, file2_label, **kwargs):
+        super().__init__(modal=True, transient_for=transient_for, **kwargs)
+        self.set_title(f"View Differences: {os.path.basename(file1_path)}")
+        self.set_default_size(850, 700)
+
+        main_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.set_content(main_vbox)
+
+        header = Adw.HeaderBar()
+        header.set_title_widget(Gtk.Label(label=f"Comparing Versions of {os.path.basename(file1_path)}"))
+        main_vbox.append(header)
+
+        scrolled_window = Gtk.ScrolledWindow()
+        scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scrolled_window.set_vexpand(True)
+        main_vbox.append(scrolled_window)
+
+        self.textview = Gtk.TextView()
+        self.textview.set_editable(False)
+        self.textview.set_monospace(True)
+        self.textview.set_wrap_mode(Gtk.WrapMode.NONE)
+        scrolled_window.set_child(self.textview)
+
+        buffer = self.textview.get_buffer()
+
+        # Tag for added lines
+        added_tag = buffer.create_tag("added")
+        added_color = Gdk.RGBA()
+        added_color.red = 0.0  # Standard Green
+        added_color.green = 0.5
+        added_color.blue = 0.0
+        added_color.alpha = 1.0
+        added_tag.set_property("foreground_rgba", added_color)
+
+        # Tag for removed lines
+        removed_tag = buffer.create_tag("removed")
+        removed_color = Gdk.RGBA()
+        removed_color.red = 0.8 # Standard Red
+        removed_color.green = 0.0
+        removed_color.blue = 0.0
+        removed_color.alpha = 1.0
+        removed_tag.set_property("foreground_rgba", removed_color)
+
+        # Tag for header lines
+        header_tag = buffer.create_tag("header")
+        # No specific color, will use default text color (black/white based on theme)
+        # header_color = Gdk.RGBA() # Example if a color was desired
+        # header_color.parse("grey")
+        # header_tag.set_property("foreground_rgba", header_color)
+        header_tag.set_property("weight", Pango.Weight.BOLD)
+
+        self._generate_and_display_diff(file1_path, file2_path, file1_label, file2_label)
+
+    def _generate_and_display_diff(self, file1_path, file2_path, file1_label, file2_label):
+        buffer = self.textview.get_buffer()
+        try:
+            with open(file1_path, 'r', encoding='utf-8', errors='ignore') as f1:
+                file1_lines = [l.rstrip('\r\n') for l in f1.readlines()]
+            with open(file2_path, 'r', encoding='utf-8', errors='ignore') as f2:
+                file2_lines = [l.rstrip('\r\n') for l in f2.readlines()]
+        except Exception as e:
+            buffer.insert(buffer.get_end_iter(), f"Error reading files: {e}\n")
+            return
+
+        diff_lines = list(difflib.unified_diff(file1_lines, file2_lines, fromfile=file1_label, tofile=file2_label, lineterm=''))
+        if not diff_lines:
+            buffer.insert(buffer.get_end_iter(), "Files are identical or no differences found.\n")
+            return
+
+        for line in diff_lines:
+            end_iter = buffer.get_end_iter()
+            line_to_insert = line + '\n'
+            if line.startswith('+++') or line.startswith('---') or line.startswith('@@'):
+                buffer.insert_with_tags_by_name(end_iter, line_to_insert, "header")
+            elif line.startswith('+'):
+                buffer.insert_with_tags_by_name(end_iter, line_to_insert, "added")
+            elif line.startswith('-'):
+                buffer.insert_with_tags_by_name(end_iter, line_to_insert, "removed")
+            else:
+                buffer.insert(end_iter, line_to_insert)
 
 class BackupProgressRow(Gtk.Box):
     def __init__(self, file_id, filename, size, eta):
