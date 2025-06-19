@@ -1651,6 +1651,7 @@ class BackupWindow(Adw.ApplicationWindow):
                 GLib.idle_add(self._hide_center_spinner)
 
         threading.Thread(target=scan, daemon=True).start()
+        
     def scan_files_folder(self):
         """Scan files and return a list of file dictionaries."""
         if not os.path.exists(self.documents_path):
@@ -1728,6 +1729,40 @@ class BackupWindow(Adw.ApplicationWindow):
         # Hide spinner after results are processed by populate_results
         GLib.idle_add(self.populate_results, results)
     
+    def on_diff_button_clicked_from_row(self, button, backup_file_path_from_button):
+        """Handles the Diff button click from a row in the main search results."""
+        backup_file_path = backup_file_path_from_button
+
+        original_file_path = self._get_original_path_from_backup(backup_file_path)
+        if not original_file_path or not os.path.exists(original_file_path):
+            dialog = Adw.MessageDialog(transient_for=self, modal=True,
+                                       title="Diff Error",
+                                       body="Original file not found in your home directory to compare against.")
+            dialog.add_response("ok", "OK")
+            dialog.connect("response", lambda d, r: d.close())
+            dialog.present()
+            return
+
+        backup_label_extra = ""
+        # Since files in populate_results are from .main_backup, they are the "current" backup version
+        if server.main_backup_folder() in backup_file_path:
+            backup_label_extra = " (Current Backup)"
+        # Fallback for other cases, though not strictly expected for populate_results items
+        else:
+            path_parts = backup_file_path.replace(server.backup_folder_name(), "").lstrip(os.sep).split(os.sep)
+            if len(path_parts) > 2 and path_parts[0] != server.MAIN_BACKUP_LOCATION: # Incremental
+                try:
+                    date_str, time_str = path_parts[0], path_parts[1]
+                    backup_label_extra = f" (Backup: {date_str} {time_str.replace('-', ':')})"
+                except Exception: pass
+
+        diff_win = DiffViewWindow(
+            transient_for=self, # self is BackupWindow
+            file1_path=backup_file_path, file2_path=original_file_path,
+            file1_label=f"{os.path.basename(backup_file_path)}{backup_label_extra}",
+            file2_label=f"{os.path.basename(original_file_path)} (Current in Home)")
+        diff_win.present()
+
     def search_backup_sources(self, query):
         query = query.strip().lower()
         if not query:
@@ -1904,26 +1939,41 @@ class BackupWindow(Adw.ApplicationWindow):
             open_location_button_row.set_hexpand(False)
             grid.attach(open_location_button_row, 5, 0, 1, 1) # Col 5: Open Location Button
 
+            # Diff button for each row
+            diff_button_row = Gtk.Button(label="Diff")
+            diff_button_row.set_tooltip_text("Compare this backup with the current file in your home directory.")
+            # diff_button_row.add_css_class("flat") # Optional styling
+            setattr(diff_button_row, "file_path", file_info["path"])
+            diff_button_row.connect("clicked", self.on_diff_button_clicked_from_row, file_info["path"])
+            diff_button_row.set_hexpand(False)
+
+            can_diff = False
+            original_path_for_diff = self._get_original_path_from_backup(file_info["path"])
+            if original_path_for_diff and os.path.exists(original_path_for_diff):
+                ext_check = os.path.splitext(file_info["path"])[1].lower()
+                if ext_check in server.TEXT_EXTENSIONS:
+                    can_diff = True
+            diff_button_row.set_sensitive(can_diff)
+            grid.attach(diff_button_row, 6, 0, 1, 1) # Col 6: Diff Button
+
             # Find file versions
             find_versions_button_row = Gtk.Button(label="Versions")
             find_versions_button_row.set_tooltip_text(
                 "Search for all available versions of the selected file, including the current and previous backups. "
                 "Use this to restore or review earlier versions of your file.")
-            find_versions_button_row.add_css_class("suggested-action")
+            find_versions_button_row.add_css_class("suggested-action") # Optional: make it less prominent if Diff is suggested
             setattr(find_versions_button_row, "file_path", file_info["path"])
-            # find_versions_button_row.connect("clicked", lambda btn: self.open_preview_window(getattr(btn, "file_path")))
             find_versions_button_row.connect("clicked", lambda btn: self.find_update(getattr(btn, "file_path")))
             find_versions_button_row.set_hexpand(False)
-            grid.attach(find_versions_button_row, 6, 0, 1, 1) # Col 6: Versions Button
+            grid.attach(find_versions_button_row, 7, 0, 1, 1) # Col 7: Versions Button (Moved from 6)
 
             # Restore button for each row
             restore_button_row = Gtk.Button(label="Restore File")
             restore_button_row.set_tooltip_text("Restore this version of the file to its original location.")
-            # restore_button_row.add_css_class("suggested-action")
             setattr(restore_button_row, "file_path", file_info["path"])
             restore_button_row.connect("clicked", self.on_restore_button_clicked_from_row) # Assuming this method exists
             restore_button_row.set_hexpand(False) # Ensure it doesn't expand
-            grid.attach(restore_button_row, 7, 0, 1, 1) # Col 7: Restore Button
+            grid.attach(restore_button_row, 8, 0, 1, 1) # Col 8: Restore Button (Moved from 7)
             
             # Wrap grid in a revealer for fade-in animation
             row_revealer = Gtk.Revealer()
