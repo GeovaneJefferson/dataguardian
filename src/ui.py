@@ -318,7 +318,7 @@ class BackupWindow(Adw.ApplicationWindow):
 
         # Initially show the content page (or spinner if files are loading)
         # self.center_content_stack.set_visible_child_name("content_page") # scan_files_folder_threaded will manage this
-
+        
         # --- Suggested Files Section ---
         suggested_files_title_label = Gtk.Label(xalign=0)
         suggested_files_title_label.set_text("Suggested Files")
@@ -336,8 +336,8 @@ class BackupWindow(Adw.ApplicationWindow):
 
         # --- Starred Files Section ---
         starred_files_header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        starred_files_header_box.set_margin_top(12) # Margin from suggested files
-        starred_files_header_box.set_margin_bottom(6)
+        starred_files_header_box.set_margin_top(0) # Margin from suggested files
+        starred_files_header_box.set_margin_bottom(0)
         content_page_box.append(starred_files_header_box)
 
         starred_files_title_label = Gtk.Label(xalign=0)
@@ -525,8 +525,6 @@ class BackupWindow(Adw.ApplicationWindow):
         self.transfer_title_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
         self.transfer_title_revealer.set_transition_duration(300)
 
-
-        # Initialize attributes for scanning status and transfer list
         self.current_scan_status_label = Gtk.Label(label="Scanning...")
         self.current_scan_status_label.set_margin_top(6)
         self.current_scan_status_label.set_margin_bottom(6)
@@ -541,53 +539,66 @@ class BackupWindow(Adw.ApplicationWindow):
         self.scan_status_revealer.set_child(self.current_scan_status_card)
         self.current_scan_status_card.set_css_classes(["card"]) # Optional: for styling
 
-        self.transfer_section_title_label = Gtk.Label(label="Active Transfers")
-        self.transfer_section_title_label.set_hexpand(False)
+        # --- Backup/Restore Queue Section (Card in Right Panel) ---
+        self.queue_card_frame = Gtk.Frame()
+        self.queue_card_frame.add_css_class("card") # Apply card styling
+        self.queue_card_frame.set_margin_top(6) # Internal padding for the card
+        self.queue_card_frame.set_margin_bottom(0)
+        self.queue_card_frame.set_margin_start(0)
+        self.queue_card_frame.set_margin_end(0)
 
-        self.transfer_listbox = Gtk.ListBox()
-        self.transfer_listbox.set_vexpand(True) # Allow it to take available vertical space        
-        self.transfer_listbox.set_margin_top(0) # No top margin, space will be from the header
-        self.transfer_listbox.set_margin_bottom(0)
-        self.transfer_listbox.set_margin_start(0)
-        self.transfer_listbox.set_margin_end(0)
-        self.transfer_listbox.set_hexpand(False)
+        queue_card_inner_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        queue_card_inner_box.set_margin_top(10) # Internal padding for the card
+        queue_card_inner_box.set_margin_bottom(10)
+        queue_card_inner_box.set_margin_start(10)
+        queue_card_inner_box.set_margin_end(10)
+        self.queue_card_frame.set_child(queue_card_inner_box) # Set inner_box as child of the frame
 
-        # Revealer for Transfer List
-        self.transfer_list_revealer = Gtk.Revealer()
-        self.transfer_list_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
-        self.transfer_list_revealer.set_transition_duration(300)
-        self.transfer_list_revealer.set_vexpand(True) # Let the revealer handle vertical expansion
+        queue_section_title = Gtk.Label(label="Backup/Restore Queue")
+        queue_section_title.set_hexpand(False)
+        queue_section_title.set_xalign(0)
+        queue_section_title.add_css_class("title-3") # Use a smaller title style
+        queue_card_inner_box.append(queue_section_title) # Add title to card's inner box
 
-        self.transfer_scrolled_window = Gtk.ScrolledWindow(child=self.transfer_listbox)
-        self.transfer_scrolled_window.set_hexpand(False) # Prevent it from taking all horizontal space
-        self.transfer_scrolled_window.set_vexpand(False) # Child of revealer, so revealer handles expansion
-        self.transfer_scrolled_window.set_margin_top(0) # No top margin, space will be from the header
-        self.transfer_scrolled_window.set_visible(True) # Scrolled window is always visible, revealer controls it
-        self.transfer_scrolled_window.set_margin_bottom(0)
-        self.transfer_scrolled_window.set_margin_start(0)
-        self.transfer_scrolled_window.set_margin_end(0)
+        self.queue_listbox = Gtk.ListBox()
+        self.queue_listbox.add_css_class("card")
+        self.queue_listbox.set_vexpand(True) # Allow it to take available vertical space        
+        self.queue_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.queue_listbox.set_margin_top(3) # No top margin, space will be from the header
+        self.queue_listbox.set_margin_bottom(3)
+        self.queue_listbox.set_margin_start(3)
+        self.queue_listbox.set_margin_end(3)
+        self.queue_listbox.set_hexpand(False)
 
+        queue_scrolled_window = Gtk.ScrolledWindow()
+        queue_scrolled_window.set_child(self.queue_listbox)
+        queue_scrolled_window.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC) # Only vertical scrolling
+        queue_scrolled_window.set_hexpand(False) # Prevent it from taking all horizontal space
+        queue_scrolled_window.set_vexpand(False) # Child of revealer, so revealer handles expansion
+        queue_scrolled_window.set_margin_top(0) # No top margin, space will be from the header
+        queue_scrolled_window.set_visible(True) # Scrolled window is always visible, revealer controls it
+        queue_scrolled_window.set_margin_bottom(0)
+        queue_scrolled_window.set_margin_start(0)
+        queue_scrolled_window.set_margin_end(0)
+        queue_card_inner_box.append(queue_scrolled_window) # Add scrolled list to card's inner box
+        
         self.current_scan_status_card.set_margin_bottom(0)
 
         # Transfer Section Title (initialized in __init__)
-        self.transfer_section_title_label.add_css_class("title-4")
-        self.transfer_section_title_label.set_xalign(0)
-        self.transfer_section_title_label.set_hexpand(False)
-        self.transfer_section_title_label.set_vexpand(False)
-        self.transfer_section_title_label.set_margin_top(0)
-        self.transfer_section_title_label.set_margin_bottom(0)
-        self.transfer_section_title_label.set_margin_start(0) # Align with the left sidebar
-        self.transfer_section_title_label.set_margin_end(0)
-        self.transfer_section_title_label.set_visible(True) # Label is always visible, revealer controls it
-        self.transfer_title_revealer.set_child(self.transfer_section_title_label)
-        left_sidebar.append(self.transfer_title_revealer)
+        queue_section_title.add_css_class("title-4")
+        queue_section_title.set_xalign(0)
+        queue_section_title.set_hexpand(False)
+        queue_section_title.set_vexpand(False)
+        queue_section_title.set_margin_top(0)
+        queue_section_title.set_margin_bottom(0)
+        queue_section_title.set_margin_start(0) # Align with the left sidebar
+        queue_section_title.set_margin_end(0)
+        queue_section_title.set_visible(True) # Label is always visible, revealer controls it
 
         # Transfer Scrolled Window (initialized in __init__)
-        self.transfer_scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        self.transfer_scrolled_window.set_min_content_height(200) # Example height
-        self.transfer_scrolled_window.set_hexpand(False)
-        self.transfer_list_revealer.set_child(self.transfer_scrolled_window)
-        left_sidebar.append(self.transfer_list_revealer)
+        queue_scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        queue_scrolled_window.set_min_content_height(200) # Example height
+        queue_scrolled_window.set_hexpand(False)
 
         # Overall Usage
         self.usage_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6) # Main container for this section
@@ -728,9 +739,10 @@ class BackupWindow(Adw.ApplicationWindow):
         self.combined_usage_label.set_margin_start(12)
         self.combined_usage_label.set_margin_end(12) # Space on the right side
         self.usage_box.append(self.combined_usage_label)
-
+        
         left_sidebar.append(spacer)
         left_sidebar.append(self.details_list)
+        left_sidebar.append(self.queue_card_frame)
         left_sidebar.append(self.scan_status_revealer) # Add revealer instead of card directly
         left_sidebar.append(self.usage_box)
 
@@ -798,10 +810,10 @@ class BackupWindow(Adw.ApplicationWindow):
     ##########################################################################
     def _update_left_panel_visibility(self):
         # Check if folder scanning is active or has items
-        has_file_transfers = bool(self.transfer_listbox.get_first_child())
+        has_file_transfers = bool(self.queue_listbox.get_first_child())
 
         self.transfer_title_revealer.set_reveal_child(has_file_transfers)
-        self.transfer_list_revealer.set_reveal_child(has_file_transfers)
+        # self.transfer_list_revealer.set_reveal_child(has_file_transfers)
 
     ##########################################################################
     # BACKUP
@@ -1035,7 +1047,7 @@ class BackupWindow(Adw.ApplicationWindow):
             listbox_row.set_child(revealer) # Add revealer to row
             
             self.transfer_rows[file_id] = listbox_row # Store the Gtk.ListBoxRow
-            self.transfer_listbox.append(listbox_row) # Add the Gtk.ListBoxRow
+            self.queue_listbox.append(listbox_row) # Add the Gtk.ListBoxRow
             revealer.set_reveal_child(True) # Animate in
 
         # Retrieve the Gtk.ListBoxRow
@@ -1080,8 +1092,8 @@ class BackupWindow(Adw.ApplicationWindow):
                 GLib.idle_add(self.update_scanning_folder_display, None) # Also hide scanning card
 
     def _remove_transfer_row_after_animation(self, row, file_id):
-        if row and row.get_parent() == self.transfer_listbox:
-            self.transfer_listbox.remove(row)
+        if row and row.get_parent() == self.queue_listbox:
+            self.queue_listbox.remove(row)
         if file_id in self.transfer_rows:
             del self.transfer_rows[file_id]
         # Check if this was the last one for real now
@@ -1314,13 +1326,14 @@ class BackupWindow(Adw.ApplicationWindow):
             original_path = item_data["original_path"]
 
             button_content = Adw.ButtonContent()
-            pixbuf = self._generate_thumbnail_pixbuf(thumbnail_path, size_px=48)
-            if pixbuf:
-                button_content.set_icon_name(None) # Clear if set
-                button_content.set_paintable(Gdk.Texture.new_for_pixbuf(pixbuf))
-            else:
-                button_content.set_icon_name("text-x-generic-symbolic") # Fallback icon
-
+            # pixbuf = self._generate_thumbnail_pixbuf(thumbnail_path, size_px=48)
+            # if pixbuf:
+            #     try:
+            #         button_content.set_paintable(Gdk.Texture.new_for_pixbuf(pixbuf))
+            #     except Exception as e:
+            #         pass
+            # else:
+            button_content.set_icon_name("text-x-generic-symbolic") # Fallback icon
             button_content.set_label(basename)
 
             btn = Gtk.Button(child=button_content, has_frame=True)
@@ -1963,9 +1976,18 @@ class BackupWindow(Adw.ApplicationWindow):
                 "Use this to restore or review earlier versions of your file.")
             find_versions_button_row.add_css_class("suggested-action") # Optional: make it less prominent if Diff is suggested
             setattr(find_versions_button_row, "file_path", file_info["path"])
-            find_versions_button_row.connect("clicked", lambda btn: self.find_update(getattr(btn, "file_path")))
-            find_versions_button_row.set_hexpand(False)
-            grid.attach(find_versions_button_row, 7, 0, 1, 1) # Col 7: Versions Button (Moved from 6)
+
+            # Create a stack to hold the button and a spinner for loading feedback
+            button_stack = Gtk.Stack()
+            button_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+            button_stack.add_named(find_versions_button_row, "button")
+            
+            spinner = Gtk.Spinner()
+            button_stack.add_named(spinner, "spinner")
+
+            find_versions_button_row.connect("clicked", lambda btn, stack=button_stack: self.find_update(getattr(btn, "file_path"), stack))
+            button_stack.set_hexpand(False)
+            grid.attach(button_stack, 7, 0, 1, 1) # Col 7: Versions Button Stack
 
             # Restore button for each row
             restore_button_row = Gtk.Button(label="Restore File")
@@ -2292,8 +2314,14 @@ class BackupWindow(Adw.ApplicationWindow):
     ########################################################################################
     # Find updates for a file
     ########################################################################################
-    def find_update(self, file_path):
+    def find_update(self, file_path, button_stack):
         # Extract the file name to search for all its backup versions
+        
+        # Show spinner on the button that was clicked
+        button_stack.set_visible_child_name("spinner")
+        spinner = button_stack.get_child_by_name("spinner")
+        spinner.start()
+
         def do_search():
             file_name = os.path.basename(file_path)
             results = []
@@ -2308,7 +2336,13 @@ class BackupWindow(Adw.ApplicationWindow):
                             "date": fdate
                         })
             results.sort(key=lambda x: x["date"], reverse=True)
-            GLib.idle_add(self.show_update_window, file_name, results)
+
+            def on_search_done():
+                spinner.stop()
+                button_stack.set_visible_child_name("button")
+                self.show_update_window(file_name, results)
+
+            GLib.idle_add(on_search_done)
 
         threading.Thread(target=do_search, daemon=True).start()
     
@@ -3717,8 +3751,8 @@ class BackupProgressRow(Gtk.Box):
         self.append(top_row)
 
         # File icon
-        icon = Gtk.Image.new_from_icon_name("text-x-generic") # Or a more specific icon based on file type if available
-        icon.set_pixel_size(24)
+        icon = Gtk.Image.new_from_icon_name("document-send-symbolic") # Or a more specific icon based on file type if available
+        # icon.set_pixel_size(24)
         top_row.append(icon)
 
         # Info column
@@ -3742,12 +3776,6 @@ class BackupProgressRow(Gtk.Box):
         spacer.set_hexpand(True)
         top_row.append(spacer)
 
-        # Cancel button
-        # self.cancel_button = Gtk.Button(icon_name="window-close") # Removed
-        # self.cancel_button.add_css_class("flat") # Removed
-        # self.cancel_button.set_valign(Gtk.Align.CENTER) # Removed
-        # top_row.append(self.cancel_button) # Removed
-
         # Progress bar
         self.progress = Gtk.ProgressBar()
         self.progress.set_hexpand(True)
@@ -3758,11 +3786,9 @@ class BackupProgressRow(Gtk.Box):
     def update(self, size, eta, progress):
         self.progress.set_fraction(progress)
         if progress >= 1.0:
-            self.size_eta_label.set_text(f"{size} • completed")
-            # self.cancel_button.set_visible(False) # Removed
+            self.size_eta_label.set_text(f"{size} • success")
         else:
             self.size_eta_label.set_text(f"{size} • {eta}")
-            # self.cancel_button.set_visible(True) # Removed
 
 class ScanningStatusRow(Gtk.Box):
     def __init__(self, filename):
