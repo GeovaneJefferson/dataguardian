@@ -241,6 +241,11 @@ class BackupWindow(Adw.ApplicationWindow):
         logs_action.connect("activate", self.show_backup_logs_dialog)
         self.add_action(logs_action)
 
+        # About Action
+        about_action = Gio.SimpleAction.new("about", None)
+        about_action.connect("activate", self.on_about_clicked)
+        self.add_action(about_action)
+
         # --- HeaderBar Right Content (Main Menu) ---
         main_menu_button = Gtk.MenuButton(icon_name="open-menu-symbolic")
         main_menu_button.set_tooltip_text("Main Menu")
@@ -274,6 +279,12 @@ class BackupWindow(Adw.ApplicationWindow):
         settings_icon = Gio.ThemedIcon.new("preferences-system-symbolic") # Or "emblem-system-symbolic"
         settings_item.set_icon(settings_icon)
         menu_model.append_item(settings_item)
+
+        # About
+        about_item = Gio.MenuItem.new(label="About", detailed_action="win.about")
+        about_icon = Gio.ThemedIcon.new("help-about-symbolic")
+        about_item.set_icon(about_icon)
+        menu_model.append_item(about_item)
 
         main_popover_menu.set_menu_model(menu_model)
         main_content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
@@ -916,7 +927,7 @@ class BackupWindow(Adw.ApplicationWindow):
             self.selected_file_path = None
 
     def populate_latest_backups(self):
-        self.top_center_label.set_text("Latest Backups Files")
+        self.top_center_label.set_text("Backups Files")
         GLib.idle_add(self._hide_center_spinner) # Ensure spinner is hidden when populating this
 
         # Show latest backup files on startup
@@ -2276,6 +2287,20 @@ class BackupWindow(Adw.ApplicationWindow):
             self.settings_window = None
         self.settings_window.connect("close-request", on_close)
         self.settings_window.present()
+        
+    def on_about_clicked(self, action, parameter):
+        """Shows the About window."""
+        about_window = Adw.AboutWindow(
+            transient_for=self,
+            application_name=server.APP_NAME,
+            application_icon=server.ID,
+            version=server.APP_VERSION,
+            developer_name=server.DEV_NAME,
+            website=server.GITHUB_PAGE,
+            issue_url=server.GITHUB__ISSUES,
+            copyright=server.COPYRIGHT
+        )
+        about_window.present()
         
     def _get_original_path_from_backup(self, backup_file_path: str) -> str | None:
         """
