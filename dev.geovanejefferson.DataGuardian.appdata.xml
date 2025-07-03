@@ -3,7 +3,7 @@
   <id>dev.geovanejefferson.DataGuardian</id>
   <name>Data Guardian</name>
   <summary>A file backup and versioning tool</summary>
-  <metadata_license>GPL-3.0-or-later</metadata_license>
+  <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
   <description>
     <p>
@@ -19,5 +19,13 @@
   <icon type="stock">dev.geovanejefferson.DataGuardian</icon>
   <url type="homepage">https://geovanejefferson.github.io/dataguardian/</url>
   <url type="donation">https://www.patreon.com/GeovaneJefferson</url>
-  <developer_name>Geovane Jefferson</developer_name>
+  <developers>
+    <developer>
+      <name>Geovane Jefferson</name>
+    </developer>
+  </developers>
+  <categories>
+    <category>Utility</category>
+    <category>Settings</category>
+</categories>
 </component>
