@@ -572,7 +572,7 @@ class BackupWindow(Adw.ApplicationWindow):
         queue_card_inner_box.append(queue_section_title) # Add title to card's inner box
 
         self.queue_listbox = Gtk.ListBox()
-        self.queue_listbox.add_css_class("card")
+        # self.queue_listbox.add_css_class("card")
         self.queue_listbox.set_vexpand(True) # Allow it to take available vertical space        
         self.queue_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
         self.queue_listbox.set_margin_top(3) # No top margin, space will be from the header
