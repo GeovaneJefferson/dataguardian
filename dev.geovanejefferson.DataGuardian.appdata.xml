@@ -3,8 +3,8 @@
   <id>com.gnome.dataguardian</id>
   <name>Data Guardian</name>
   <summary>A file backup and versioning tool</summary>
-  <metadata_license>MIT</metadata_license>
-  <project_license>MIT</project_license>
+  <metadata_license>GPL3</metadata_license>
+  <project_license>GPL3</project_license>
   <description>
     <p>
       Data Guardian is a backup tool designed specifically for Linux users. It continuously monitors your files for any new updates and immediately backs them up while maintaining previous versions for easy recovery. This ensures that your important files are always up to date and securely stored.

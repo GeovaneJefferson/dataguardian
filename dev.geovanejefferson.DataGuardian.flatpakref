@@ -1,6 +1,6 @@
 [Flatpak Ref]
 Title=Data Guardian
-Name=com.gnome.dataguardian
+Name=dev.geovanejefferson.DataGuardian
 Branch=stable
 Url=https://geovanejefferson.github.io/dataguardian/repo # <-- UPDATED URL!
 IsRuntime=false
