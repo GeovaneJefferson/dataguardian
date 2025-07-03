@@ -7,7 +7,7 @@
    viewBox="0 0 39.946838 127.46174"
    version="1.1"
    id="svg5"
-   inkscape:version="1.3.2 (091e20ef0f, 2023-11-25)"
+   inkscape:version="1.4.2 (ebf0e940d0, 2025-05-08)"
    sodipodi:docname="base.svg"
    xml:space="preserve"
    inkscape:export-filename="timemachine/src/icons/systemtrayiconrestore.png"
@@ -31,7 +31,7 @@
      inkscape:cx="88.339489"
      inkscape:cy="28.067731"
      inkscape:window-width="1920"
-     inkscape:window-height="1007"
+     inkscape:window-height="1005"
      inkscape:window-x="0"
      inkscape:window-y="0"
      inkscape:window-maximized="1"
@@ -379,9 +379,9 @@
        inkscape:export-xdpi="80.116486"
        inkscape:export-ydpi="80.116486"><g
          id="g12"
-         inkscape:export-filename="systemtray.png"
-         inkscape:export-xdpi="99.858833"
-         inkscape:export-ydpi="99.858833"><circle
+         inkscape:export-filename="dev.geovanejefferson.DataGuardian.png"
+         inkscape:export-xdpi="405.77557"
+         inkscape:export-ydpi="405.77557"><circle
            id="circle3"
            cx="26.766029"
            cy="155.03204"

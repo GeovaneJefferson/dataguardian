@@ -1,4 +1,4 @@
-app-id: com.gnome.dataguardian
+app-id: dev.geovanejefferson.DataGuardian
 runtime: org.gnome.Platform
 runtime-version: "48"
 sdk: org.gnome.Sdk
@@ -40,10 +40,10 @@ modules:
       #   path: . # Use local project directory
 
       - type: file
-        path: com.gnome.dataguardian.metainfo.xml
+        path: dev.geovanejefferson.DataGuardian.metainfo.xml
 
       - type: file
-        path: data/icons/com.gnome.dataguardian.png
+        path: data/icons/dev.geovanejefferson.DataGuardian.png
 
     build-commands:
       # App main data
@@ -54,17 +54,17 @@ modules:
 
       # Desktop launcher
       - mkdir -p /app/share/applications
-      - cp share/applications/com.gnome.dataguardian.desktop /app/share/applications/
+      - cp share/applications/dev.geovanejefferson.DataGuardian.desktop /app/share/applications/
 
       # App icon (modern and legacy)
       - mkdir -p /app/share/icons/hicolor/128x128/apps
-      - cp data/icons/com.gnome.dataguardian.png /app/share/icons/hicolor/128x128/apps/
+      - cp data/icons/dev.geovanejefferson.DataGuardian.png /app/share/icons/hicolor/128x128/apps/
       - mkdir -p /app/share/icons/hicolor/48x48/apps
-      - cp data/icons/com.gnome.dataguardian.png /app/share/icons/hicolor/48x48/apps/
+      - cp data/icons/dev.geovanejefferson.DataGuardian.png /app/share/icons/hicolor/48x48/apps/
 
       # AppStream metadata
       - mkdir -p /app/share/metainfo
-      - cp com.gnome.dataguardian.metainfo.xml /app/share/metainfo/
+      - cp dev.geovanejefferson.DataGuardian.metainfo.xml /app/share/metainfo/
 
       # Executable scripts
       - install -D -m755 dataguardian.sh /app/bin/dataguardian.sh
