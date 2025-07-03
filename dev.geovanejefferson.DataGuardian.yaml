@@ -40,7 +40,7 @@ modules:
       #   path: . # Use local project directory
 
       - type: file
-        path: dev.geovanejefferson.DataGuardian.metainfo.xml
+        path: dev.geovanejefferson.DataGuardian.appdata.xml
 
       - type: file
         path: data/icons/dev.geovanejefferson.DataGuardian.png
