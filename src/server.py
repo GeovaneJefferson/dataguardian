@@ -97,7 +97,8 @@ class SERVER:
 		self.SUMMARY_FILENAME: str = ".backup_summary.json"
 		self.BACKUPS_LOCATION_DIR_NAME: str = "backups"  # Where backups will be saved
 		self.APPLICATIONS_LOCATION_DIR_NAME: str = "applications"
-
+		self.APP_RELEASE_NOTES: str = ""
+		
 		################################################################################
 		# DRIVER LOCATION
 		################################################################################

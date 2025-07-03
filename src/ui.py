@@ -335,7 +335,7 @@ class BackupWindow(Adw.ApplicationWindow):
         suggested_files_title_label.set_text("Suggested Files")
         suggested_files_title_label.add_css_class("title-3")
         suggested_files_title_label.set_margin_top(12)
-        suggested_files_title_label.set_margin_bottom(6)
+        suggested_files_title_label.set_margin_bottom(0)
         content_page_box.append(suggested_files_title_label)
 
         self.suggested_files_flowbox = Gtk.FlowBox()
@@ -2290,15 +2290,18 @@ class BackupWindow(Adw.ApplicationWindow):
         
     def on_about_clicked(self, action, parameter):
         """Shows the About window."""
+        print(server.ID + ".png")
         about_window = Adw.AboutWindow(
             transient_for=self,
             application_name=server.APP_NAME,
-            application_icon=server.ID,
+            application_icon=server.ID + ".png",    
             version=server.APP_VERSION,
             developer_name=server.DEV_NAME,
             website=server.GITHUB_PAGE,
             issue_url=server.GITHUB__ISSUES,
-            copyright=server.COPYRIGHT
+            copyright=server.COPYRIGHT,        
+            release_notes=server.APP_RELEASE_NOTES,
+            comments="DataGuardian is a simple and efficient backup solution for your personal files.",
         )
         about_window.present()
         
