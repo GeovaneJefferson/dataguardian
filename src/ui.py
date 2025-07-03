@@ -2294,7 +2294,7 @@ class BackupWindow(Adw.ApplicationWindow):
         about_window = Adw.AboutWindow(
             transient_for=self,
             application_name=server.APP_NAME,
-            application_icon=server.ID + ".png",    
+            application_icon=server.ID,    
             version=server.APP_VERSION,
             developer_name=server.DEV_NAME,
             website=server.GITHUB_PAGE,
