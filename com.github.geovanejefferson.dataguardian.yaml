@@ -49,7 +49,6 @@ modules:
 
       - mkdir -p /app/share/applications
       - cp share/applications/com.github.geovanejefferson.dataguardian.desktop /app/share/applications/
-
       - mkdir -p /app/share/icons/hicolor/128x128/apps
       - cp data/icons/com.github.geovanejefferson.dataguardian.png /app/share/icons/hicolor/128x128/apps/
       - mkdir -p /app/share/icons/hicolor/48x48/apps
