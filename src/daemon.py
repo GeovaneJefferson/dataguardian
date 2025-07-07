@@ -674,7 +674,8 @@ class Daemon:
 
             # After main backup and summary, backup downloaded packages
             if not (self.should_exit or self.suspend_flag):
-                await self._backup_downloaded_packages()
+                if server.DRIVER_LOCATION and self.is_backup_location_writable():
+                    await self._backup_downloaded_packages()
         
         try:
             if os.path.exists(self.interruped_main_file):

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Name=Data Guardian
+Comment=Backup and Data Management Tool
+Exec=/app/bin/dataguardian.sh
+Icon=io.github.geovanejefferson.dataguardian
+Type=Application
+Terminal=false
+Categories=Utility;System;
+StartupNotify=true
+Encoding=UTF-8

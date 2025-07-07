@@ -1,3 +1,6 @@
+import os
+print(os.path.expanduser("~"))
+
 from server import *
 #from ui_old import BackupSettingsWindow
 from ui import BackupWindow
