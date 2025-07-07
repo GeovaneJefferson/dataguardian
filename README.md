@@ -10,6 +10,12 @@ Data Guardian is a Python-based backup solution designed to safeguard your impor
 
 ---
 
+## ✨ Screenshots
+
+![Data Guardian Screenshot](data/screenshoot.png)
+
+---
+
 ## Core Features
 
 ### Daemon Features
@@ -68,17 +74,12 @@ The GTK4-based graphical user interface (GUI) provides an intuitive way to inter
 *   `psutil` (install with `pip install psutil`)
 *   `setproctitle` (install with `pip install setproctitle`)
 
-### Installation
+### Running from Source (for Development/Testing)
 
-Data Guardian is intended to be installed as a Flatpak for the best user experience.
-
-**1. Via Flatpak (Recommended)**
-
-   *(Note: Flatpak manifest and build instructions are under development. Once available, you will typically build and install it locally as follows. For official releases, it might be available on Flathub or another repository.)*
-
-   First, ensure you have `flatpak` and `flatpak-builder` installed on your system.
-
-   Clone the repository (if you haven't already):
-   ```bash
-   git clone https://github.com/geovanejefferson/dataguardian.git 
-   cd dataguardian
+1.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/geovanejefferson/dataguardian.git
+    cd dataguardian
+    flatpak-builder --user --install --force-clean build-dir dev.geovanejefferson.DataGuardian.yaml
+    ```
+   Remember to install dependecies! Found in `requirements.txt`.
