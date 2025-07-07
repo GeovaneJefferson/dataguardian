@@ -15,10 +15,10 @@ finish-args:
   - --share=network
 
   # File access (host = full system; use with care)
-  - --filesystem=host  # Needed for full backup access
+  - --filesystem=host
 
   # Runtime socket (for daemon communication)
-  - --filesystem=xdg-run/dataguardian:create  # Allow socket communication if used
+  - --filesystem=xdg-run/dataguardian:create
 
   # Access to user bus and Flatpak APIs
   - --socket=session-bus
@@ -35,73 +35,50 @@ modules:
       - type: git
         url: https://github.com/GeovaneJefferson/dataguardian.git
         branch: main
-
-      # - type: dir
-      #   path: . # Use local project directory
-
       - type: file
         path: dev.geovanejefferson.DataGuardian.appdata.xml
-
       - type: file
         path: data/icons/dev.geovanejefferson.DataGuardian.png
-
     build-commands:
-      # App main data
       - mkdir -p /app/share/dataguardian
       - cp -r src /app/share/dataguardian
       - cp -r data /app/share/dataguardian
       - cp -r share /app/share/dataguardian
 
-      # Desktop launcher
       - mkdir -p /app/share/applications
       - cp share/applications/dev.geovanejefferson.DataGuardian.desktop /app/share/applications/
 
-      # App icon (modern and legacy)
       - mkdir -p /app/share/icons/hicolor/128x128/apps
       - cp data/icons/dev.geovanejefferson.DataGuardian.png /app/share/icons/hicolor/128x128/apps/
       - mkdir -p /app/share/icons/hicolor/48x48/apps
       - cp data/icons/dev.geovanejefferson.DataGuardian.png /app/share/icons/hicolor/48x48/apps/
 
-      # AppStream metadata
       - mkdir -p /app/share/appdata
       - cp dev.geovanejefferson.DataGuardian.appdata.xml /app/share/appdata/
 
-      # Executable scripts
       - install -D -m755 dataguardian.sh /app/bin/dataguardian.sh
       - install -D -m755 stop-daemon.sh /app/bin/stop-daemon.sh
 
-      # Runtime config storage (optional)
       - mkdir -p /app/share/dataguardian/config
 
-      # Python dependencies
-      # Dependencies will be installed from vendored wheels in python-dependencies module
-      # - pip3 install --prefix=/app -r requirements.txt
+  - name: python3-setproctitle
+    buildsystem: simple
+    build-commands:
+      - pip3 install --verbose --exists-action=i --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} "setproctitle" --no-build-isolation
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/9e/af/56efe21c53ac81ac87e000b15e60b3d8104224b4313b6eacac3597bd183d/setproctitle-1.3.6.tar.gz
+        sha256: c9f32b96c700bb384f33f7cf07954bb609d35dd82752cef57fb2ee0968409169
 
-    # build-options:
-    #   build-args:
-    #     - --share=network
+  - name: python3-psutil
+    buildsystem: simple
+    build-commands:
+      - pip3 install --verbose --exists-action=i --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} "psutil" --no-build-isolation
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/2a/80/336820c1ad9286a4ded7e845b2eccfcb27851ab8ac6abece774a6ff4d3de/psutil-7.0.0.tar.gz
+        sha256: 7be9c3eba38beccb6495ea33afd982a44074b78f28c434a1f51cc07fd315c456
 
-  - name: python3-requirements
-      buildsystem: simple
-      build-commands: []
-      modules:
-        - name: python3-setproctitle
-          buildsystem: simple
-          build-commands:
-            - pip3 install --verbose --exists-action=i --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} "setproctitle" --no-build-isolation
-          sources:
-            - type: file
-              url: https://files.pythonhosted.org/packages/9e/af/56efe21c53ac81ac87e000b15e60b3d8104224b4313b6eacac3597bd183d/setproctitle-1.3.6.tar.gz
-              sha256: c9f32b96c700bb384f33f7cf07954bb609d35dd82752cef57fb2ee0968409169
-        - name: python3-psutil
-          buildsystem: simple
-          build-commands:
-            - pip3 install --verbose --exists-action=i --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} "psutil" --no-build-isolation
-          sources:
-            - type: file
-              url: https://files.pythonhosted.org/packages/2a/80/336820c1ad9286a4ded7e845b2eccfcb27851ab8ac6abece774a6ff4d3de/psutil-7.0.0.tar.gz
-              sha256: 7be9c3eba38beccb6495ea33afd982a44074b78f28c434a1f51cc07fd315c456
-
-# Optional: Add this if stop-daemon.sh should clean something up at build time
+# Optional cleanup commands if needed
 # cleanup-commands:
 #   - /app/bin/stop-daemon.sh || true
