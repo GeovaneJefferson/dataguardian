@@ -74,11 +74,19 @@ modules:
       - mkdir -p /app/share/dataguardian/config
 
       # Python dependencies
-      - pip3 install --prefix=/app -r requirements.txt
+      # Dependencies will be installed from vendored wheels in python-dependencies module
+      # - pip3 install --prefix=/app -r requirements.txt
 
-    build-options:
-      build-args:
-        - --share=network
+    # build-options:
+    #   build-args:
+    #     - --share=network
+  - name: python-dependencies
+    buildsystem: simple
+    build-commands:
+      - pip3 install --prefix=/app python-deps/*.whl
+    sources:
+      - type: dir
+        path: python-deps
 
 # Optional: Add this if stop-daemon.sh should clean something up at build time
 # cleanup-commands:
