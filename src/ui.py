@@ -234,7 +234,8 @@ class BackupWindow(Adw.ApplicationWindow):
         restore_action = Gio.SimpleAction.new("systemrestore", None)
         restore_action.connect("activate", self.on_restore_system_button_clicked)
         self.add_action(restore_action)
-        restore_action.set_enabled(has_driver_connection())
+        restore_action.set_enabled(False)
+        # restore_action.set_enabled(has_driver_connection())
 
         # Logs Action
         logs_action = Gio.SimpleAction.new("logs", None)
