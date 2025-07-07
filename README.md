@@ -74,12 +74,33 @@ The GTK4-based graphical user interface (GUI) provides an intuitive way to inter
 *   `psutil` (install with `pip install psutil`)
 *   `setproctitle` (install with `pip install setproctitle`)
 
-### Running from Source (for Development/Testing)
+### 1. Running from Source (for Development)
+
+This is the recommended method for development and local testing.
 
 1.  **Clone the repository:**
     ```bash
     git clone https://github.com/geovanejefferson/dataguardian.git
     cd dataguardian
+    ```
+
+2.  **Install dependencies (using a virtual environment is recommended):**
+    ```bash
+    python3 -m venv venv
+    source venv/bin/activate
+    pip install -r requirements.txt
+    ```
+
+3.  **Run the application:**
+    ```bash
+    python3 src/ui.py
+    ```
+
+### 2. Building and Installing with Flatpak
+
+This method builds the application as a Flatpak package, which is the intended distribution format.
+
+1.  **Build and install the Flatpak:**
+    ```bash
     flatpak-builder --user --install --force-clean build-dir dev.geovanejefferson.DataGuardian.yaml
     ```
-   Remember to install dependecies! Found in `requirements.txt`.

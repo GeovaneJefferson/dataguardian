@@ -7,7 +7,7 @@ command: dataguardian.sh
 finish-args:
   # GUI support
   - --socket=wayland
-  - --socket=x11
+  - --socket=fallback-x11
   - --share=ipc
   - --device=dri
 
@@ -15,18 +15,20 @@ finish-args:
   - --share=network
 
   # File access (host = full system; use with care)
+  # Host filesystem access is required for a backup utility to access user-selected
+  # source folders (e.g. home directory) and backup destinations (e.g. external drives).
   - --filesystem=host
 
   # Runtime socket (for daemon communication)
   - --filesystem=xdg-run/dataguardian:create
 
-  # Access to user bus and Flatpak APIs
-  - --socket=session-bus
-  - --talk-name=org.freedesktop.Flatpak
-
   # Required for some file chooser/storage access
   - --filesystem=xdg-run/flatpak
   - --filesystem=xdg-run/gvfsd
+
+  # Required for system restore of Flatpak applications
+  - --socket=session-bus
+  - --talk-name=org.freedesktop.Flatpak
 
 modules:
   - name: dataguardian
@@ -34,7 +36,7 @@ modules:
     sources:
       - type: git
         url: https://github.com/GeovaneJefferson/dataguardian.git
-        branch: main
+        commit: 30ee6fa60072cd6b4a59a7b268e2a813644f6ac1
       - type: file
         path: dev.geovanejefferson.DataGuardian.appdata.xml
       - type: file
