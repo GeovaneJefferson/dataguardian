@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>dev.geovanejefferson.DataGuardian</id>
+  <id>com.github.GeovaneJefferson.DataGuardian</id>
   <name>Data Guardian</name>
   <summary>A file backup and versioning tool</summary>
   <metadata_license>CC0-1.0</metadata_license>
