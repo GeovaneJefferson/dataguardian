@@ -1,4 +1,4 @@
-app-id: com.github.geovanejefferson.dataguardian
+app-id: io.github.geovanejefferson.dataguardian
 runtime: org.gnome.Platform
 runtime-version: "48"
 sdk: org.gnome.Sdk
@@ -38,9 +38,11 @@ modules:
         url: https://github.com/GeovaneJefferson/dataguardian.git
         commit: 30ee6fa60072cd6b4a59a7b268e2a813644f6ac1
       - type: file
-        path: com.github.geovanejefferson.dataguardian.appdata.xml
+        path: io.github.geovanejefferson.dataguardian.appdata.xml
       - type: file
-        path: data/icons/com.github.geovanejefferson.dataguardian.png
+        path: share/applications/io.github.geovanejefferson.dataguardian.desktop
+      - type: file
+        path: data/icons/io.github.geovanejefferson.dataguardian.png
     build-commands:
       - mkdir -p /app/share/dataguardian
       - cp -r src /app/share/dataguardian
@@ -48,14 +50,14 @@ modules:
       - cp -r share /app/share/dataguardian
 
       - mkdir -p /app/share/applications
-      - cp share/applications/com.github.geovanejefferson.dataguardian.desktop /app/share/applications/
+      - cp io.github.geovanejefferson.dataguardian.desktop /app/share/applications/
       - mkdir -p /app/share/icons/hicolor/128x128/apps
-      - cp data/icons/com.github.geovanejefferson.dataguardian.png /app/share/icons/hicolor/128x128/apps/
+      - cp io.github.geovanejefferson.dataguardian.png /app/share/icons/hicolor/128x128/apps/
       - mkdir -p /app/share/icons/hicolor/48x48/apps
-      - cp data/icons/com.github.geovanejefferson.dataguardian.png /app/share/icons/hicolor/48x48/apps/
+      - cp io.github.geovanejefferson.dataguardian.png /app/share/icons/hicolor/48x48/apps/
 
       - mkdir -p /app/share/appdata
-      - cp com.github.geovanejefferson.dataguardian.appdata.xml /app/share/appdata/
+      - cp io.github.geovanejefferson.dataguardian.appdata.xml /app/share/appdata/
 
       - install -D -m755 dataguardian.sh /app/bin/dataguardian.sh
       - install -D -m755 stop-daemon.sh /app/bin/stop-daemon.sh

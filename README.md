@@ -102,5 +102,5 @@ This method builds the application as a Flatpak package, which is the intended d
 
 1.  **Build and install the Flatpak:**
     ```bash
-    flatpak-builder --user --install --force-clean build-dir com.github.geovanejefferson.dataguardian.yaml
+    flatpak-builder --user --install --force-clean build-dir io.github.geovanejefferson.dataguardian.yaml
     ```
