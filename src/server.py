@@ -89,7 +89,7 @@ class SERVER:
 		self.GITHUB_PAGE: str = "https://github.com/GeovaneJefferson/dataguardian"
 		self.GITHUB__ISSUES: str = "https://github.com/GeovaneJefferson/dataguardian/issues"
 		self.COPYRIGHT: str = "Copyright © 2025 Geovane J.\n\n This application comes with absolutely no warranty. See the GNU General Public License, version 3 or later for details."
-		self.ID: str = "dev.geovanejefferson.DataGuardian"
+		self.ID: str = "com.github.geovanejefferson.dataguardian"
 		self.APP_NAME: str = "Data Guardian"
 		# self.APP_NAME_CLOSE_LOWER: str = "dataguardian"
 		self.APP_NAME_CLOSE_LOWER: str = self.APP_NAME.lower().replace(" ", "")
