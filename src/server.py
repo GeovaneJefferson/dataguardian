@@ -117,6 +117,9 @@ class SERVER:
 		# self.SOCKET_PATH = "/tmp/guardian-ui.sock"
 		# self.SOCKET_PATH: str = f"~/.var/app/{self.ID}/cache/tmp/guardian-ui.sock"
 		self.SOCKET_PATH = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "guardian-ui.sock")
+		# Concurrency settings for copying files
+		# Default, can be adjusted based on system resources and current load
+		self.DEFAULT_COPY_CONCURRENCY = 2
 
 		################################################################################
 		# HOME SYSTEM LOCATIONS

@@ -5,9 +5,6 @@ from server import *
 
 WAIT_TIME = 5  # Minutes between backup checks
 
-# Concurrency settings for copying files
-# Default, can be adjusted based on system resources and current load
-DEFAULT_COPY_CONCURRENCY = 2
 
 def send_to_ui(message: str):
     try:
@@ -32,7 +29,7 @@ class Daemon:
     ############################################################################
     def __init__(self):
         """Initialize the daemon with necessary configurations and signal handlers."""
-        self.copy_concurrency = DEFAULT_COPY_CONCURRENCY # Initialize with default
+        self.copy_concurrency = server.DEFAULT_COPY_CONCURRENCY # Initialize with default
         self.executor = None # Initialize before first use in _update_copy_concurrency
         self.copy_semaphore = None # Initialize before first use in _update_copy_concurrency
         self.loop = None # To store the event loop for threadsafe calls
@@ -69,16 +66,16 @@ class Daemon:
                 #     f"Setting COPY_CONCURRENCY to a conservative {new_concurrency}."
                 # )
             else:
-                new_concurrency = max(1, min(cpu_cores if cpu_cores else DEFAULT_COPY_CONCURRENCY, 8))
+                new_concurrency = max(1, min(cpu_cores if cpu_cores else server.DEFAULT_COPY_CONCURRENCY, 8))
                 # logging.info(
                 #     f"CPU load ({cpu_load}%) is moderate. "
                 #     f"Setting COPY_CONCURRENCY to {new_concurrency} based on {cpu_cores or 'default'} CPU cores."
                 # )
         except Exception as e:
             logging.warning(
-                f"Could not determine CPU cores/load, defaulting COPY_CONCURRENCY to {DEFAULT_COPY_CONCURRENCY}. Error: {e}"
+                f"Could not determine CPU cores/load, defaulting COPY_CONCURRENCY to {server.DEFAULT_COPY_CONCURRENCY}. Error: {e}"
             )
-            new_concurrency = DEFAULT_COPY_CONCURRENCY
+            new_concurrency = server.DEFAULT_COPY_CONCURRENCY
 
         if self.copy_concurrency != new_concurrency or self.executor is None:
             self.copy_concurrency = new_concurrency
