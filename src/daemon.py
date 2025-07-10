@@ -657,7 +657,7 @@ class Daemon:
                 # If successful, process.stdout will have the script's print statements/logs
                 logging.info(f"generate_backup_summary.py stdout:\n{process.stdout}")
                 if process.stderr: # Log stderr if any, even on success
-                    logging.warning(f"generate_backup_summary.py produced output on stderr (exit code 0):\n{process.stderr}")
+                    logging.critical(f"[CRITICAL] generate_backup_summary.py produced output on stderr (exit code 0):\n{process.stderr}")
 
                 send_to_ui(json.dumps({"type": "summary_updated"}))
 
