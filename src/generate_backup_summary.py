@@ -1,5 +1,4 @@
 from server import *  # Assuming server.py is in the same directory or accessible
-from concurrent.futures import ProcessPoolExecutor
 
 server = SERVER()
 
@@ -27,22 +26,6 @@ def _get_file_category(filename):
             return category
     return "Others"
 
-def _update_category_stats(file_path, category_stats):
-    file_size, category = _process_file_stats(file_path)
-    if file_size is not None and category is not None:
-        category_stats[category]["count"] += 1
-        category_stats[category]["size"] += file_size
-        return file_size
-    return 0
-
-def _process_file_stats(file_path):
-    if os.path.isfile(file_path) and not os.path.islink(file_path):
-        file_size = os.path.getsize(file_path)
-        category = _get_file_category(os.path.basename(file_path))
-        return file_size, category
-    return None, None
-
-
 def generate_summary():
     # logging.info("Generating backup summary...")
     backup_root = server.backup_folder_name()
@@ -64,42 +47,39 @@ def generate_summary():
             json.dump({"categories": [], "most_frequent_backups": [], "error": "Backup path not found"}, f, indent=4)
         return
 
-    # Use concurrency setting from server for multiprocessing
-    num_workers = server.DEFAULT_COPY_CONCURRENCY
-    # num_workers = os.cpu_count() or 4 # Fallback to 4 if cpu_count() fails
+    logging.info(f"Starting walk in main backup path: {main_backup_path} for category stats.")
+    files_processed_count = 0
+    try:
+        for root, dirs, files_in_dir in os.walk(main_backup_path):
+            logging.debug(f"Summary (main): Walking directory: {root}")
+            # Exclude hidden directories from further traversal
+            dirs[:] = [d for d in dirs if not d.startswith('.')]
 
-    logging.info(f"Starting walk in main backup path: {main_backup_path} for category stats using {num_workers} workers.")
-
-    with ProcessPoolExecutor(max_workers=num_workers) as executor:
-        total_size = 0
-        try:
-            for root, dirs, files_in_dir in os.walk(main_backup_path):
-                logging.debug(f"Summary (main): Walking directory: {root}")
-                # Exclude hidden directories from further traversal
-                dirs[:] = [d for d in dirs if not d.startswith('.')]
-
-                file_paths = [os.path.join(root, f) for f in files_in_dir if not f.startswith('.')]
-
-                # Submit tasks to the executor in chunks to limit memory usage
-                chunk_size = 1000  # Adjust chunk size as needed based on memory usage
-                for i in range(0, len(file_paths), chunk_size):
-                    chunk = file_paths[i:i + chunk_size]
-                    for file_size in executor.map(_update_category_stats, chunk, itertools.repeat(category_stats)):
-                        total_size += file_size
-
-        except Exception as e_walk:
-            logging.error(f"[CRITICAL]: Error during os.walk or multiprocessing in {main_backup_path} for summary: {e_walk}", exc_info=True)
-            with open(summary_output_path, 'w') as f:
-                json.dump({
-                    "categories": [],
-                    "most_frequent_backups": [],
-                    "most_frequent_recent_backups": [],
-                    "error": f"Error during summary generation: {e_walk}"
-                }, f, indent=4)
-            raise  # Re-raise to ensure the calling process (daemon) knows it failed
-
-    logging.info(f"Finished processing main backup. Total size: {_format_size(total_size)}")
-    #logging.info(f"Finished walk in {main_backup_path} for category stats. Total files processed: {files_processed_count}")
+            for filename in files_in_dir:
+                if filename.startswith('.'): # Skip hidden files
+                    continue
+                
+                file_path = os.path.join(root, filename)
+                try:
+                    if os.path.isfile(file_path) and not os.path.islink(file_path):
+                        category = _get_file_category(filename)
+                        category_stats[category]["count"] += 1
+                        category_stats[category]["size"] += os.path.getsize(file_path)
+                        files_processed_count += 1
+                        # if files_processed_count % 2000 == 0: # Log progress
+                        #     logging.info(f"Processed {files_processed_count} files for main backup summary (current: {file_path})...")
+                except FileNotFoundError:
+                    logging.warning(f"File not found during summary generation (main): {file_path}")
+                    continue
+                except Exception as e:
+                    logging.error(f"Error processing file {file_path} for summary (main): {e}")
+                    continue
+    except Exception as e_walk:
+        logging.error(f"[CRITICAL]: Error during os.walk in {main_backup_path} for summary: {e_walk}", exc_info=True)
+        with open(summary_output_path, 'w') as f:
+            json.dump({"categories": [], "most_frequent_backups": [], "most_frequent_recent_backups": [], "error": f"Error during summary generation: {e_walk}"}, f, indent=4)
+        raise # Re-raise to ensure the calling process (daemon) knows it failed
+    # logging.info(f"Finished walk in {main_backup_path} for category stats. Total files processed: {files_processed_count}")
 
     # --- Calculate Most Frequent Backups from Incremental Backups ---
     file_backup_counts = {}
@@ -146,13 +126,11 @@ def generate_summary():
                         if is_recent_date:
                             recent_file_backup_counts[original_rel_path] = recent_file_backup_counts.get(original_rel_path, 0) + 1
                         
-                        # logging.debug(f"Processed incremental file: {os.path.join(root_inc, filename_loop)}, rel_path: {original_rel_path}")
+                        incremental_files_processed_count +=1
                         # if incremental_files_processed_count % 2000 == 0: # Log progress
                         #     logging.info(f"Processed {incremental_files_processed_count} files for incremental summary (current: {os.path.join(root_inc, filename_loop)})...")
         # logging.info(f"Finished walk in {backup_root} for incremental backup stats. Total files processed: {incremental_files_processed_count}")
 
-
-    logging.info("Combining results and writing summary.")
 
     # Sort files by backup count in descending order and select top N
     sorted_files = sorted(file_backup_counts.items(), key=lambda item: item[1], reverse=True)

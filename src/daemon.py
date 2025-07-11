@@ -161,7 +161,7 @@ class Daemon:
         try:
             os.makedirs(base_path, exist_ok=True)
         except OSError as e:
-            logging.error(f"[CRITICAL]: Backup base path {base_path} does not exist and cannot be created: {e}")
+            logging.critical(f"Backup base path {base_path} does not exist and cannot be created: {e}")
             return False
         
         test_file_path = os.path.join(base_path, ".writetest.tmp")
@@ -171,7 +171,7 @@ class Daemon:
             os.remove(test_file_path)
             return True
         except OSError as e:
-            logging.error(f"[CRITICAL]: Backup location {base_path} is not writable: {e}")
+            logging.critical(f"Backup location {base_path} is not writable: {e}")
             return False
 
     ############################################################################
@@ -186,7 +186,7 @@ class Daemon:
                     h.update(chunk)
             return h.hexdigest()
         except Exception as e:
-            logging.error(f"[CRITICAL]: Hash error: {path}: {e}")
+            logging.critical(f"Hash error: {path}: {e}")
             return ""
 
     def file_was_updated(self, src: str, rel_path: str) -> bool:
@@ -270,7 +270,7 @@ class Daemon:
                 total_size_bytes = os.path.getsize(src)
                 human_readable_size = server.get_item_size(src, True)
             except OSError as e:
-                logging.error(f"[CRITICAL]: Cannot get size of {src}: {e}")
+                logging.critical(f"Cannot get size of {src}: {e}")
                 error_msg = {"id": file_id, "filename": filename, "size": human_readable_size, "eta": "error", "progress": 0.0, "error": f"Cannot access file: {e}"}
                 send_to_ui(json.dumps(error_msg))
                 return
@@ -285,7 +285,7 @@ class Daemon:
                     send_to_ui(json.dumps(error_msg))
                     return
             except Exception as e:
-                logging.error(f"[CRITICAL]: Error checking disk space: {e}")
+                logging.critical(f"Error checking disk space: {e}")
                 error_msg = {"id": file_id, "filename": filename, "size": human_readable_size, "eta": "error", "progress": 0.0, "error": f"Disk check failed: {e}"}
                 send_to_ui(json.dumps(error_msg))
                 return
@@ -359,6 +359,7 @@ class Daemon:
                 await loop.run_in_executor(self.executor, shutil.copystat, src, dst)
 
                 logging.info(f"Backed up: {src} -> {dst}")
+
                 final_msg = {
                     "type": "transfer_progress",
                     "id": file_id, 
@@ -367,7 +368,7 @@ class Daemon:
                     "eta": "done", "progress": 1.0}
                 send_to_ui(json.dumps(final_msg))
             except Exception as e:
-                logging.error(f"[CRITICAL]: Error copying {src} -> {dst}: {e}")
+                logging.critical(f"Error copying {src} -> {dst}: {e}")
                 try:
                     if os.path.exists(tmp_dst):
                         os.remove(tmp_dst)
@@ -400,7 +401,7 @@ class Daemon:
             )
             logging.info(f"Backed up downloaded package: {src_path} -> {dest_path}")
         except Exception as e:
-            logging.error(f"[CRITICAL]: Error backing up downloaded package {src_path} to {dest_path}: {e}")
+            logging.critical(f"Error backing up downloaded package {src_path} to {dest_path}: {e}")
 
     ############################################################################
     # FOLDER METADATA HANDLING
@@ -429,9 +430,9 @@ class Daemon:
             # but os.replace is atomic on POSIX if src and dst are on the same filesystem.
             os.replace(temp_path, meta_path)
         except OSError as e:
-            logging.error(f"[CRITICAL]: OSError while saving folder metadata for {top_rel_path} at {meta_path}: {e}")
+            logging.critical(f"OSError while saving folder metadata for {top_rel_path} at {meta_path}: {e}")
         except Exception as e:
-            logging.error(f"[CRITICAL]: Unexpected error while saving folder metadata for {top_rel_path} at {meta_path}: {e}")
+            logging.critical(f"Unexpected error while saving folder metadata for {top_rel_path} at {meta_path}: {e}")
         
     def folder_needs_check(self, rel_folder, current_meta, cached_meta):
         cached = cached_meta.get(rel_folder)
@@ -481,9 +482,13 @@ class Daemon:
             logging.warning(f"Downloads folder not found at {downloads_path}. Skipping package backup.")
             return
 
-        if not server.DRIVER_LOCATION or not self.is_backup_location_writable():
-            logging.warning("Backup driver not connected or not writable. Skipping package backup.")
+        if not server.DRIVER_LOCATION:
+            logging.warning("Backup device not connected. Skipping package backup.")
             return
+        
+        if not self.is_backup_location_writable():
+            logging.warning("[CRITICAL]: Backup device is not writable. Skipping package backup.")
+            return 
 
         package_backup_tasks = []
         for item_name in os.listdir(downloads_path):
@@ -535,7 +540,7 @@ class Daemon:
             with open(self.interruped_main_file, 'w') as f:
                 f.write("interrupted")
         except OSError as e:
-            logging.error(f"[CRITICAL]: Could not write to interrupted_main_file {self.interruped_main_file}: {e}. "
+            logging.critical(f"Could not write to interrupted_main_file {self.interruped_main_file}: {e}. "
                           "Backup may not resume correctly if interrupted again. "
                           "This may indicate a read-only filesystem.")
             # Depending on severity, might return or raise to stop the backup cycle
@@ -644,7 +649,9 @@ class Daemon:
             if self.should_exit or self.suspend_flag:
                 logging.info("scan_and_backup: Exiting or suspending after awaiting tasks, before summary.")
                 return
+            
             server.update_recent_backup_information()
+            
             # After backup tasks are complete, generate the summary
             try:
                 summary_script_path = os.path.join(os.path.dirname(__file__), 'generate_backup_summary.py')
@@ -656,17 +663,12 @@ class Daemon:
                 )
                 # If successful, process.stdout will have the script's print statements/logs
                 logging.info(f"generate_backup_summary.py stdout:\n{process.stdout}")
-                if process.stderr: # Log stderr if any, even on success
-                    logging.critical(f"[CRITICAL] generate_backup_summary.py produced output on stderr (exit code 0):\n{process.stderr}")
-
                 send_to_ui(json.dumps({"type": "summary_updated"}))
 
             except sub.CalledProcessError as e: # This will be raised if check=True and script returns non-zero
-                logging.error(f"[CRITICAL]: Failed to generate backup summary. Script: {summary_script_path}, Return code: {e.returncode}")
-                if e.stdout: logging.error(f"generate_backup_summary.py stdout (on error):\n{e.stdout}")
-                if e.stderr: logging.error(f"generate_backup_summary.py stderr (on error):\n{e.stderr}")
+                logging.warning(f"Failed to generate backup summary. Script: {summary_script_path}, Return code: {e.returncode}")
             except Exception as e: # Catch other potential errors like FileNotFoundError for the script itself
-                logging.error(f"[CRITICAL]: Failed to generate backup summary (unexpected error): {e}", exc_info=True)
+                logging.critical(f"Failed to generate backup summary (unexpected error): {e}", exc_info=True)
             logging.info("Backup session complete.")
 
             # After main backup and summary, backup downloaded packages
@@ -678,7 +680,7 @@ class Daemon:
             if os.path.exists(self.interruped_main_file):
                 os.remove(self.interruped_main_file)
         except OSError as e:
-            logging.error(f"[CRITICAL]: Could not remove interrupted_main_file {self.interruped_main_file}: {e}. "
+            logging.critical(f"Could not remove interrupted_main_file {self.interruped_main_file}: {e}. "
                           "This may indicate a read-only filesystem.")
         
         # Cleanup empty incremental folders
@@ -706,7 +708,7 @@ class Daemon:
             # else:
                 # logging.info(f"Incremental session folder {session_backup_dir} is not empty.")
         except OSError as e:
-            logging.error(f"[CRITICAL]: Error during cleanup of empty incremental folders for {session_backup_dir}: {e}")
+            logging.critical(f"Error during cleanup of empty incremental folders for {session_backup_dir}: {e}")
 
     ############################################################################
     # INTERRUPTION HANDLING
@@ -738,7 +740,7 @@ class Daemon:
                 if existing_pid != int(self.pid): # Check if it's not self (e.g. from a previous crash)
                     try:
                         os.kill(existing_pid, 0) # Check if process exists
-                        logging.error(f"[CRITICAL]: Another daemon instance (PID {existing_pid}) appears to be running. Exiting.")
+                        logging.critical(f"Another daemon instance (PID {existing_pid}) appears to be running. Exiting.")
                         return # Exit the run method, daemon will stop
                     except OSError: # Process with existing_pid not running (stale PID file)
                         logging.warning(f"Stale PID file found for PID {existing_pid}. Removing it.")
@@ -795,15 +797,11 @@ class Daemon:
                     await self.scan_and_backup()
                 else:
                     # Log critical only if this is a new or persistent issue
-                    if not getattr(self, "had_writability_issue", False):
-                        logging.critical(f"[CRITICAL]: Backup location {server.create_base_folder()} is not writable. Automatic backups will be disabled by the UI if running.")
-                        self.had_writability_issue = True # Set flag to avoid repeated critical logs for the same issue in one session
-                    else:
-                        logging.error(f"[CRITICAL]: Backup location {server.create_base_folder()} is still not writable. Skipping backup cycle.")
+                    logging.critical(f"[CRITICAL]: Backup location {server.create_base_folder()} is not writable. Automatic backups will be disabled by the UI if running.")
+                    self.had_writability_issue = True # Set flag to avoid repeated critical logs for the same issue in one session
             else:
-                logging.info("Backup drive not connected. Skipping backup cycle.")
-                if getattr(self, "had_writability_issue", False): # Reset if drive disconnected
-                    self.had_writability_issue = False
+                logging.info("[CRITICAL]: Backup device is not connected. Skipping backup cycle.")
+                self.had_writability_issue = False
 
             logging.debug(f"Waiting for {WAIT_TIME} minutes before next cycle.")
             total_wait = WAIT_TIME * 60

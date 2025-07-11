@@ -193,9 +193,9 @@ class BackupWindow(Adw.ApplicationWindow):
         self._check_for_critical_log_errors() # Check for critical errors at startup
         # self.update_overview_cards_from_summary() # Load summary data for overview cards
 
-        # Initial population of results or spinner showing is handled by scan_files_folder_threaded
-
         threading.Thread(target=self.start_server, daemon=True).start()  # Start the socket server in a separate thread
+        # Start the summary data loading in a separate thread
+        threading.Thread(target=self._populate_summary_data, daemon=True).start()
 
         # Grab searchbar focus on startup
         self.search_entry.grab_focus()
@@ -629,6 +629,8 @@ class BackupWindow(Adw.ApplicationWindow):
         used_bytes = 0
         fraction = 0.0
 
+        # Get the device usage info only if driver_location is set
+        # and the path exists to avoid errors.
         if self.driver_location and os.path.exists(self.driver_location):
             try:
                 total_bytes_val, used_bytes_val, _ = shutil.disk_usage(self.driver_location)
@@ -652,51 +654,50 @@ class BackupWindow(Adw.ApplicationWindow):
         self.details_list.set_selection_mode(Gtk.SelectionMode.NONE)
         self.details_list.add_css_class("card")
 
-        # Define mappings for icons and colors
-        category_icons = {
-            "Image": "image-x-generic-symbolic",
-            "Video": "video-x-generic-symbolic",
-            "Document": "x-office-document-symbolic",
-            "Others": "application-x-addon-symbolic",
-            # Add more categories and their icons as needed
-        }
-        default_icon = "dialog-question-symbolic"
+        # # Define mappings for icons and colors
+        # category_icons = {
+        #     "Image": "image-x-generic-symbolic",
+        #     "Video": "video-x-generic-symbolic",
+        #     "Document": "x-office-document-symbolic",
+        #     "Others": "application-x-addon-symbolic",
+        #     # Add more categories and their icons as needed
+        # }
+        # default_icon = "dialog-question-symbolic"
 
-        category_colors = {
-            "Image": "#EA4335",
-            "Video": "#4285F4",
-            "Document": "#34A853",
-            "Others": "#FBBC04",
-            # Add more categories and their colors as needed
-        }
-        default_color = "#9E9E9E"
+        # category_colors = {
+        #     "Image": "#EA4335",
+        #     "Video": "#4285F4",
+        #     "Document": "#34A853",
+        #     "Others": "#FBBC04",
+        #     # Add more categories and their colors as needed
+        # }
+        # default_color = "#9E9E9E"
 
-        items_from_summary = []
-        summary_file_path = server.get_summary_filename()
+        # items_from_summary = []
+        # summary_file_path = server.get_summary_filename()
 
-        if os.path.exists(summary_file_path):
-            try:
-                with open(summary_file_path, 'r') as f:
-                    summary_data = json.load(f)
-                if "categories" in summary_data:
-                    for category_info in summary_data["categories"]:
-                        name = category_info.get("name", "Unknown")
-                        items_from_summary.append({
-                            "name": name,
-                            "icon_name": category_icons.get(name, default_icon),
-                            "color_hex": category_colors.get(name, default_color),
-                            "count": f"{category_info.get('count', 0)} files",
-                            "size": category_info.get("size_str", "0 B")
-                        })
-            except Exception as e:
-                print(f"Error loading or parsing summary file {summary_file_path}: {e}")
+        # if os.path.exists(summary_file_path):
+        #     try:
+        #         with open(summary_file_path, 'r') as f:
+        #             summary_data = json.load(f)
+        #         if "categories" in summary_data:
+        #             for category_info in summary_data["categories"]:
+        #                 name = category_info.get("name", "Unknown")
+        #                 items_from_summary.append({
+        #                     "name": name,
+        #                     "icon_name": category_icons.get(name, default_icon),
+        #                     "color_hex": category_colors.get(name, default_color),
+        #                     "count": f"{category_info.get('count', 0)} files",
+        #                     "size": category_info.get("size_str", "0 B")
+        #                 })
+        #     except Exception as e:
+        #         print(f"Error loading or parsing summary file {summary_file_path}: {e}")
 
-        if not items_from_summary: # Fallback or empty state
-            self.details_list.append(self._create_detail_row("No summary data", default_icon, default_color, "0 files", "0 B"))
-        else:
-            for item_data in items_from_summary:
-                self.details_list.append(self._create_detail_row(item_data["name"], item_data["icon_name"], item_data["color_hex"], item_data["count"], item_data["size"]))
-        
+        # if not items_from_summary: # Fallback or empty state
+        #     self.details_list.append(self._create_detail_row("No summary data", default_icon, default_color, "0 files", "0 B"))
+        # else:
+        #     for item_data in items_from_summary:
+        #         self.details_list.append(self._create_detail_row(item_data["name"], item_data["icon_name"], item_data["color_hex"], item_data["count"], item_data["size"]))
 
         # This widget will take up all the extra space
         spacer = Gtk.Box()
@@ -1261,6 +1262,59 @@ class BackupWindow(Adw.ApplicationWindow):
             else:
                 logging.error(f"  Path {file_path_clicked} looks incremental but structure is unexpected. Returning original.")
         return file_path_clicked # Fallback if conversion is not possible
+    
+    ##########################################################################
+    # POPULATE SUMMARY DATA
+    ##########################################################################
+    def _populate_summary_data(self):
+        """
+        Loads the summary data from the JSON file and updates the UI.
+        This is called on startup to ensure the latest summary is displayed.
+        """
+        items_from_summary = []
+        summary_file_path = server.get_summary_filename()
+        print(summary_file_path)
+        # Define mappings for icons and colors
+        category_icons = {
+            "Image": "image-x-generic-symbolic",
+            "Video": "video-x-generic-symbolic",
+            "Document": "x-office-document-symbolic",
+            "Others": "application-x-addon-symbolic",
+            # Add more categories and their icons as needed
+        }
+        default_icon = "dialog-question-symbolic"
+
+        category_colors = {
+            "Image": "#EA4335",
+            "Video": "#4285F4",
+            "Document": "#34A853",
+            "Others": "#FBBC04",
+            # Add more categories and their colors as needed
+        }
+        default_color = "#9E9E9E"
+
+        if os.path.exists(summary_file_path):
+            try:
+                with open(summary_file_path, 'r') as f:
+                    summary_data = json.load(f)
+                if "categories" in summary_data:
+                    for category_info in summary_data["categories"]:
+                        name = category_info.get("name", "Unknown")
+                        items_from_summary.append({
+                            "name": name,
+                            "icon_name": category_icons.get(name, default_icon),
+                            "color_hex": category_colors.get(name, default_color),
+                            "count": f"{category_info.get('count', 0)} files",
+                            "size": category_info.get("size_str", "0 B")
+                        })
+            except Exception as e:
+                print(f"Error loading or parsing summary file {summary_file_path}: {e}")
+
+        if not items_from_summary: # Fallback or empty state
+            self.details_list.append(self._create_detail_row("No summary data", default_icon, default_color, "0 files", "0 B"))
+        else:
+            for item_data in items_from_summary:
+                self.details_list.append(self._create_detail_row(item_data["name"], item_data["icon_name"], item_data["color_hex"], item_data["count"], item_data["size"]))
 
     ##########################################################################
     # SUGGESTED FILES
@@ -1552,9 +1606,9 @@ class BackupWindow(Adw.ApplicationWindow):
             print(f"Failed to create image preview widget for {filepath}: {e}")
             return None
 
-    ##########################################################################
-    # SEARCH ENTRY
-    ##########################################################################
+            ##########################################################################
+            # SEARCH ENTRY
+            ##########################################################################
             # Scale to fit preview area (e.g., max width 200px, adjust as needed)
             # This is a simple scaling, more sophisticated logic might be needed
             preview_width = self.preview_scrolled_window.get_allocated_width() - 20 # Account for padding
