@@ -84,26 +84,18 @@ This is the recommended method for development and local testing.
     cd dataguardian
     ```
 
-2.  **Install dependencies (using a virtual environment is recommended):**
-    ```bash
-    python3 -m venv venv
-    source venv/bin/activate
-    pip install -r requirements.txt
-    ```
-
-3.  **Run the application:**
-    ```bash
-    python3 src/ui.py
-    ```
-
-### 2. Building and Installing with Flatpak
-
-This method builds the application as a Flatpak package, which is the intended distribution format.
-
-1.  **Build and install the Flatpak:**
-    ```bash
-    cd dataguardian
-    ```
+2.  **Install with flatpak builder:**
     ```bash
     flatpak-builder --user --install --force-clean build-dir io.github.geovanejefferson.dataguardian.yaml
+    ```
+
+### To Remove
+1.  **Open Terminal:**
+    ```bash
+    flatpak remove io.github.geovanejefferson.dataguardian -y
+    ```
+
+2.  **Clean:**
+    ```bash
+    rm -rf /home/$USER/.var/app/io.github.geovanejefferson.dataguardian
     ```
