@@ -695,13 +695,13 @@ class SERVER:
 
 		except BrokenPipeError:  
 			# Handle broken pipe without crashing
-			logging.warning(f"Broken Pipe Error in {server.APP_NAME}'s database: {e}")
+			logging.warning(f"Broken Pipe Error in {self.APP_NAME}'s database: {e}")
 			return None
 		except FileNotFoundError as e:
-			logging.warning(f"[CRITICAL]: {server.APP_NAME}'s database not found: {e}")
+			logging.warning(f"[CRITICAL]: {self.APP_NAME}'s database not found: {e}")
 			return None
 		except Exception as e:
-			logging.warning(f"[CRITICAL]: {server.APP_NAME}'s database Exception: {e}")
+			logging.warning(f"[CRITICAL]: {self.APP_NAME}'s database Exception: {e}")
 			return None
 		
 	def safe_write_config(config, file_path):
