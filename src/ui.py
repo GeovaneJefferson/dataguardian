@@ -1544,7 +1544,7 @@ class BackupWindow(Adw.ApplicationWindow):
         mime, _ = mimetypes.guess_type(filepath)
         if mime is None: mime = ""
 
-        if (ext in server.TEXT_EXTENSIONS or mime.startswith("text")): #NOSONAR #NOSONAR
+        if (ext in server.TEXT_EXTENSIONS or mime.startswith("text")): #NOSONAR
             preview_widget = self._create_text_preview_widget(filepath)
         elif (ext in server.IMAGE_EXTENSIONS or mime.startswith("image")):
             preview_widget = self._create_image_preview_widget(filepath)
